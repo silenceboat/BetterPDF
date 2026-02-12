@@ -1,0 +1,539 @@
+/**
+ * DeepRead AI - PDF Viewer
+ *
+ * Handles PDF rendering, navigation, zoom, and text selection.
+ */
+
+class PDFViewer {
+    constructor(containerId) {
+        this.container = document.getElementById(containerId);
+        this.currentPage = 1;
+        this.pageCount = 0;
+        this.zoom = 1.0;
+        this.minZoom = 0.25;
+        this.maxZoom = 4.0;
+        this.zoomStep = 0.25;
+
+        this.pageImage = null;
+        this.pageContainer = null;
+        this.isLoading = false;
+
+        // Selection state
+        this.isSelecting = false;
+        this.selectionStart = null;
+        this.selectionEnd = null;
+        this.selectionRect = null;
+        this.selectedText = '';
+
+        this.init();
+    }
+
+    init() {
+        this.renderPlaceholder();
+        this.setupKeyboardShortcuts();
+    }
+
+    renderPlaceholder() {
+        this.container.innerHTML = `
+            <div class="pdf-placeholder">
+                <div class="pdf-placeholder-icon">
+                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <path d="M10 13v-1a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v1"/>
+                        <path d="M10 13v7"/>
+                        <path d="M14 13v7"/>
+                    </svg>
+                </div>
+                <div class="pdf-placeholder-text">No PDF Open</div>
+                <div class="pdf-placeholder-hint">Click "Open PDF" to get started</div>
+                <button class="btn btn-primary" id="open-pdf-btn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M6 22a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2H6Z"/>
+                        <path d="M14 2v6h6"/>
+                        <path d="M12 18v-6"/>
+                        <path d="M9 15l3 3 3-3"/>
+                    </svg>
+                    Open PDF
+                </button>
+            </div>
+        `;
+
+        const openBtn = document.getElementById('open-pdf-btn');
+        if (openBtn) {
+            openBtn.addEventListener('click', () => {
+                window.app?.openPdf();
+            });
+        }
+    }
+
+    async loadDocument(filePath) {
+        const result = await API.openPdf(filePath);
+
+        if (result.success) {
+            this.pageCount = result.page_count;
+            this.currentPage = 1;
+            this.zoom = 1.0;
+
+            this.renderViewer();
+            await this.renderPage();
+            this.updatePageInfo();
+
+            return result;
+        } else {
+            throw new Error(result.error || 'Failed to open PDF');
+        }
+    }
+
+    renderViewer() {
+        this.container.innerHTML = `
+            <div class="pdf-toolbar">
+                <button id="prev-page" title="Previous Page (←)">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="m15 18-6-6 6-6"/>
+                    </svg>
+                </button>
+                <button id="next-page" title="Next Page (→)">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="m9 18 6-6-6-6"/>
+                    </svg>
+                </button>
+                <div class="page-info">
+                    <span>Page</span>
+                    <input type="text" id="page-input" value="1">
+                    <span id="page-count">/ ${this.pageCount}</span>
+                </div>
+                <div class="zoom-controls">
+                    <button id="zoom-out" title="Zoom Out">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="11" cy="11" r="8"/>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                            <line x1="8" y1="11" x2="14" y2="11"/>
+                        </svg>
+                    </button>
+                    <span class="zoom-level" id="zoom-level">100%</span>
+                    <button id="zoom-in" title="Zoom In">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="11" cy="11" r="8"/>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                            <line x1="11" y1="8" x2="11" y2="14"/>
+                            <line x1="8" y1="11" x2="14" y2="11"/>
+                        </svg>
+                    </button>
+                    <button id="fit-width" title="Fit Width">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M2 12h20"/>
+                            <path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-6"/>
+                            <path d="m4 8 4-4 4 4"/>
+                            <path d="M20 8l-4-4-4 4"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="pdf-viewport" id="pdf-viewport">
+                <div class="pdf-page-container" id="page-container">
+                    <img id="page-image" alt="PDF Page">
+                    <div class="selection-layer" id="selection-layer"></div>
+                </div>
+            </div>
+        `;
+
+        this.bindEvents();
+    }
+
+    bindEvents() {
+        // Navigation
+        document.getElementById('prev-page')?.addEventListener('click', () => this.prevPage());
+        document.getElementById('next-page')?.addEventListener('click', () => this.nextPage());
+
+        // Page input
+        const pageInput = document.getElementById('page-input');
+        pageInput?.addEventListener('change', (e) => {
+            const page = parseInt(e.target.value);
+            if (page >= 1 && page <= this.pageCount) {
+                this.goToPage(page);
+            } else {
+                e.target.value = this.currentPage;
+            }
+        });
+
+        pageInput?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.target.blur();
+            }
+        });
+
+        // Zoom
+        document.getElementById('zoom-out')?.addEventListener('click', () => this.zoomOut());
+        document.getElementById('zoom-in')?.addEventListener('click', () => this.zoomIn());
+        document.getElementById('fit-width')?.addEventListener('click', () => this.fitWidth());
+
+        // Selection
+        const viewport = document.getElementById('pdf-viewport');
+        const pageContainer = document.getElementById('page-container');
+
+        if (pageContainer) {
+            pageContainer.addEventListener('mousedown', (e) => this.onSelectionStart(e));
+            pageContainer.addEventListener('mousemove', (e) => this.onSelectionMove(e));
+            pageContainer.addEventListener('mouseup', (e) => this.onSelectionEnd(e));
+        }
+
+        // Click outside to clear selection
+        viewport?.addEventListener('click', (e) => {
+            if (e.target === viewport) {
+                this.clearSelection();
+            }
+        });
+    }
+
+    setupKeyboardShortcuts() {
+        document.addEventListener('keydown', (e) => {
+            // Only handle if not typing in an input
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+                return;
+            }
+
+            switch (e.key) {
+                case 'ArrowLeft':
+                case 'PageUp':
+                    e.preventDefault();
+                    this.prevPage();
+                    break;
+                case 'ArrowRight':
+                case 'PageDown':
+                    e.preventDefault();
+                    this.nextPage();
+                    break;
+                case 'Home':
+                    e.preventDefault();
+                    this.goToPage(1);
+                    break;
+                case 'End':
+                    e.preventDefault();
+                    this.goToPage(this.pageCount);
+                    break;
+                case '+':
+                case '=':
+                    if (e.ctrlKey) {
+                        e.preventDefault();
+                        this.zoomIn();
+                    }
+                    break;
+                case '-':
+                    if (e.ctrlKey) {
+                        e.preventDefault();
+                        this.zoomOut();
+                    }
+                    break;
+                case '0':
+                    if (e.ctrlKey) {
+                        e.preventDefault();
+                        this.setZoom(1.0);
+                    }
+                    break;
+            }
+        });
+    }
+
+    async renderPage() {
+        if (this.isLoading || !this.pageCount) return;
+
+        this.isLoading = true;
+        const img = document.getElementById('page-image');
+
+        try {
+            const result = await API.getPage(this.currentPage, this.zoom);
+
+            if (result.success) {
+                img.src = `data:image/png;base64,${result.image_data}`;
+                img.style.width = `${result.page_width * this.zoom}px`;
+                img.style.height = `${result.page_height * this.zoom}px`;
+
+                // Store page dimensions for coordinate calculations
+                this.pageDimensions = {
+                    width: result.page_width,
+                    height: result.page_height
+                };
+            }
+        } catch (error) {
+            console.error('Failed to render page:', error);
+        } finally {
+            this.isLoading = false;
+        }
+    }
+
+    prevPage() {
+        if (this.currentPage > 1) {
+            this.goToPage(this.currentPage - 1);
+        }
+    }
+
+    nextPage() {
+        if (this.currentPage < this.pageCount) {
+            this.goToPage(this.currentPage + 1);
+        }
+    }
+
+    goToPage(pageNum) {
+        if (pageNum < 1 || pageNum > this.pageCount || pageNum === this.currentPage) {
+            return;
+        }
+
+        this.currentPage = pageNum;
+        this.renderPage();
+        this.updatePageInfo();
+        this.clearSelection();
+    }
+
+    updatePageInfo() {
+        const pageInput = document.getElementById('page-input');
+        const pageCount = document.getElementById('page-count');
+        const prevBtn = document.getElementById('prev-page');
+        const nextBtn = document.getElementById('next-page');
+
+        if (pageInput) pageInput.value = this.currentPage;
+        if (pageCount) pageCount.textContent = `/ ${this.pageCount}`;
+
+        if (prevBtn) prevBtn.disabled = this.currentPage <= 1;
+        if (nextBtn) nextBtn.disabled = this.currentPage >= this.pageCount;
+    }
+
+    zoomIn() {
+        if (this.zoom < this.maxZoom) {
+            this.setZoom(this.zoom + this.zoomStep);
+        }
+    }
+
+    zoomOut() {
+        if (this.zoom > this.minZoom) {
+            this.setZoom(this.zoom - this.zoomStep);
+        }
+    }
+
+    setZoom(zoom) {
+        this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, zoom));
+        this.renderPage();
+        this.updateZoomDisplay();
+    }
+
+    fitWidth() {
+        const viewport = document.getElementById('pdf-viewport');
+        if (viewport && this.pageDimensions) {
+            const padding = 80;
+            const availableWidth = viewport.clientWidth - padding;
+            const newZoom = availableWidth / this.pageDimensions.width;
+            this.setZoom(Math.min(newZoom, this.maxZoom));
+        }
+    }
+
+    updateZoomDisplay() {
+        const zoomLevel = document.getElementById('zoom-level');
+        if (zoomLevel) {
+            zoomLevel.textContent = `${Math.round(this.zoom * 100)}%`;
+        }
+    }
+
+    // ==================== Text Selection ====================
+
+    onSelectionStart(e) {
+        // Only left click
+        if (e.button !== 0) return;
+
+        const pageContainer = document.getElementById('page-container');
+        const rect = pageContainer.getBoundingClientRect();
+
+        this.isSelecting = true;
+        this.selectionStart = {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+        };
+        this.selectionEnd = { ...this.selectionStart };
+
+        this.clearSelection();
+    }
+
+    onSelectionMove(e) {
+        if (!this.isSelecting) return;
+
+        const pageContainer = document.getElementById('page-container');
+        const rect = pageContainer.getBoundingClientRect();
+
+        this.selectionEnd = {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+        };
+
+        this.updateSelectionOverlay();
+    }
+
+    onSelectionEnd(e) {
+        if (!this.isSelecting) return;
+
+        this.isSelecting = false;
+
+        // Calculate selection rectangle
+        const rect = this.calculateSelectionRect();
+
+        if (rect && this.isValidSelection(rect)) {
+            this.selectionRect = rect;
+            this.extractSelectedText();
+            this.showSelectionMenu(e.clientX, e.clientY);
+        } else {
+            this.clearSelection();
+        }
+    }
+
+    calculateSelectionRect() {
+        if (!this.selectionStart || !this.selectionEnd) return null;
+
+        const x1 = Math.min(this.selectionStart.x, this.selectionEnd.x);
+        const y1 = Math.min(this.selectionStart.y, this.selectionEnd.y);
+        const x2 = Math.max(this.selectionStart.x, this.selectionEnd.x);
+        const y2 = Math.max(this.selectionStart.y, this.selectionEnd.y);
+
+        return { x1, y1, x2, y2 };
+    }
+
+    isValidSelection(rect) {
+        const minSize = 10;
+        return (rect.x2 - rect.x1) > minSize && (rect.y2 - rect.y1) > minSize;
+    }
+
+    updateSelectionOverlay() {
+        const layer = document.getElementById('selection-layer');
+        if (!layer) return;
+
+        const rect = this.calculateSelectionRect();
+        if (!rect) return;
+
+        // Remove existing highlight
+        const existing = layer.querySelector('.selection-highlight');
+        if (existing) existing.remove();
+
+        // Create new highlight
+        const highlight = document.createElement('div');
+        highlight.className = 'selection-highlight';
+        highlight.style.left = `${rect.x1}px`;
+        highlight.style.top = `${rect.y1}px`;
+        highlight.style.width = `${rect.x2 - rect.x1}px`;
+        highlight.style.height = `${rect.y2 - rect.y1}px`;
+
+        layer.appendChild(highlight);
+    }
+
+    async extractSelectedText() {
+        if (!this.selectionRect) return;
+
+        // Convert screen coordinates to PDF coordinates
+        const pdfRect = this.screenToPdfCoords(this.selectionRect);
+
+        try {
+            const result = await API.extractText(this.currentPage, pdfRect);
+            if (result.success) {
+                this.selectedText = result.text;
+            }
+        } catch (error) {
+            console.error('Failed to extract text:', error);
+        }
+    }
+
+    screenToPdfCoords(screenRect) {
+        if (!this.pageDimensions) return screenRect;
+
+        const scaleX = this.pageDimensions.width / (document.getElementById('page-image')?.clientWidth || 1);
+        const scaleY = this.pageDimensions.height / (document.getElementById('page-image')?.clientHeight || 1);
+
+        return {
+            x1: screenRect.x1 * scaleX,
+            y1: screenRect.y1 * scaleY,
+            x2: screenRect.x2 * scaleX,
+            y2: screenRect.y2 * scaleY
+        };
+    }
+
+    showSelectionMenu(x, y) {
+        // Remove existing menu
+        this.hideSelectionMenu();
+
+        const menu = document.createElement('div');
+        menu.className = 'selection-menu';
+        menu.id = 'selection-menu';
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+
+        const actions = [
+            { label: 'Explain', action: 'explain' },
+            { label: 'Summarize', action: 'summarize' },
+            { label: 'Translate', action: 'translate' },
+            { label: 'Define', action: 'define' },
+            { label: 'Ask AI', action: 'ask' }
+        ];
+
+        actions.forEach(({ label, action }) => {
+            const item = document.createElement('div');
+            item.className = 'selection-menu-item';
+            item.dataset.action = action;
+            item.textContent = label;
+            item.addEventListener('click', () => {
+                this.handleSelectionAction(action);
+                this.hideSelectionMenu();
+            });
+            menu.appendChild(item);
+        });
+
+        document.body.appendChild(menu);
+
+        // Adjust position if menu goes off screen
+        const menuRect = menu.getBoundingClientRect();
+        if (menuRect.right > window.innerWidth) {
+            menu.style.left = `${x - menuRect.width}px`;
+        }
+        if (menuRect.bottom > window.innerHeight) {
+            menu.style.top = `${y - menuRect.height}px`;
+        }
+    }
+
+    hideSelectionMenu() {
+        const existing = document.getElementById('selection-menu');
+        if (existing) existing.remove();
+    }
+
+    handleSelectionAction(action) {
+        if (!this.selectedText) return;
+
+        // Switch to AI panel and trigger action
+        window.app?.switchPanel('ai');
+        window.app?.aiPanel?.addUserMessage(`[${action}] ${this.selectedText.substring(0, 100)}...`);
+        window.app?.aiPanel?.processAiAction(action, this.selectedText);
+    }
+
+    clearSelection() {
+        this.hideSelectionMenu();
+        this.selectionStart = null;
+        this.selectionEnd = null;
+        this.selectionRect = null;
+        this.selectedText = '';
+
+        const layer = document.getElementById('selection-layer');
+        if (layer) {
+            layer.innerHTML = '';
+        }
+    }
+
+    getCurrentPage() {
+        return this.currentPage;
+    }
+
+    getPageCount() {
+        return this.pageCount;
+    }
+
+    getSelectedText() {
+        return this.selectedText;
+    }
+}
+
+// Export for module systems
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = PDFViewer;
+}
