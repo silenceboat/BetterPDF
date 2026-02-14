@@ -29,6 +29,8 @@ class PDFViewer {
         this.ocrEnabled = false;
         this.ocrResults = {};  // page_num -> lines array
         this.ocrLoading = false;
+        this.autoFit = true;
+        this._layoutResizeRaf = null;
 
         this.init();
     }
@@ -36,31 +38,35 @@ class PDFViewer {
     init() {
         this.renderPlaceholder();
         this.setupKeyboardShortcuts();
+        window.addEventListener('resize', () => this.onLayoutResize());
+        window.addEventListener('deepread:layout-resized', () => this.onLayoutResize());
     }
 
     renderPlaceholder() {
         this.container.innerHTML = `
-            <div class="pdf-placeholder">
-                <div class="pdf-placeholder-icon">
-                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
-                        <polyline points="14 2 14 8 20 8"/>
-                        <path d="M10 13v-1a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v1"/>
-                        <path d="M10 13v7"/>
-                        <path d="M14 13v7"/>
-                    </svg>
+            <div class="pdf-viewport">
+                <div class="pdf-placeholder">
+                    <div class="pdf-placeholder-icon">
+                        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <path d="M10 13v-1a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v1"/>
+                            <path d="M10 13v7"/>
+                            <path d="M14 13v7"/>
+                        </svg>
+                    </div>
+                    <div class="pdf-placeholder-text">No PDF Open</div>
+                    <div class="pdf-placeholder-hint">Click "Open PDF" to get started</div>
+                    <button class="btn btn-primary" id="open-pdf-placeholder-btn">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M6 22a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2H6Z"/>
+                            <path d="M14 2v6h6"/>
+                            <path d="M12 18v-6"/>
+                            <path d="M9 15l3 3 3-3"/>
+                        </svg>
+                        Open PDF
+                    </button>
                 </div>
-                <div class="pdf-placeholder-text">No PDF Open</div>
-                <div class="pdf-placeholder-hint">Click "Open PDF" to get started</div>
-                <button class="btn btn-primary" id="open-pdf-placeholder-btn">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M6 22a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2H6Z"/>
-                        <path d="M14 2v6h6"/>
-                        <path d="M12 18v-6"/>
-                        <path d="M9 15l3 3 3-3"/>
-                    </svg>
-                    Open PDF
-                </button>
             </div>
         `;
 
@@ -81,9 +87,11 @@ class PDFViewer {
             this.zoom = 1.0;
             this.ocrResults = {};
             this.ocrEnabled = false;
+            this.autoFit = true;
 
             this.renderViewer();
             await this.renderPage();
+            this.fitWidth();
             this.updatePageInfo();
 
             return result;
@@ -141,6 +149,7 @@ class PDFViewer {
                         <rect x="3" y="3" width="18" height="18" rx="2"/>
                         <path d="M7 7h2v2H7zM7 11h2v2H7zM7 15h2v2H7zM11 7h6M11 11h6M11 15h6"/>
                     </svg>
+                    <span>OCR Text</span>
                 </button>
             </div>
             <div class="pdf-viewport" id="pdf-viewport">
@@ -325,18 +334,22 @@ class PDFViewer {
 
     zoomIn() {
         if (this.zoom < this.maxZoom) {
-            this.setZoom(this.zoom + this.zoomStep);
+            this.setZoom(this.zoom + this.zoomStep, { manual: true });
         }
     }
 
     zoomOut() {
         if (this.zoom > this.minZoom) {
-            this.setZoom(this.zoom - this.zoomStep);
+            this.setZoom(this.zoom - this.zoomStep, { manual: true });
         }
     }
 
-    setZoom(zoom) {
+    setZoom(zoom, options = {}) {
+        const { manual = true } = options;
         this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, zoom));
+        if (manual) {
+            this.autoFit = false;
+        }
         this.renderPage();
         this.updateZoomDisplay();
     }
@@ -347,8 +360,20 @@ class PDFViewer {
             const padding = 80;
             const availableWidth = viewport.clientWidth - padding;
             const newZoom = availableWidth / this.pageDimensions.width;
-            this.setZoom(Math.min(newZoom, this.maxZoom));
+            this.autoFit = true;
+            this.setZoom(Math.min(newZoom, this.maxZoom), { manual: false });
         }
+    }
+
+    onLayoutResize() {
+        if (!this.autoFit || !this.pageCount) return;
+        if (this._layoutResizeRaf) {
+            cancelAnimationFrame(this._layoutResizeRaf);
+        }
+        this._layoutResizeRaf = requestAnimationFrame(() => {
+            this._layoutResizeRaf = null;
+            this.fitWidth();
+        });
     }
 
     updateZoomDisplay() {

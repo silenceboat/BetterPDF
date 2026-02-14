@@ -11,6 +11,8 @@ class DeepReadApp {
         this.aiPanel = null;
         this.notesPanel = null;
         this.toastContainer = null;
+        this.isResizingPanels = false;
+        this.leftPanelStorageKey = 'deepread_left_panel_width';
 
         this.init();
     }
@@ -30,9 +32,10 @@ class DeepReadApp {
         this.setupHeader();
 
         // Initialize components
-        this.pdfViewer = new PDFViewer('pdf-viewport');
+        this.pdfViewer = new PDFViewer('pdf-panel-root');
         this.aiPanel = new AIChatPanel('panel-content');
         this.notesPanel = new NotesPanel('panel-content');
+        this.setupResizableLayout();
 
         // Show initial panel
         this.switchPanel('ai');
@@ -78,6 +81,74 @@ class DeepReadApp {
         // Save button
         document.getElementById('save-btn')?.addEventListener('click', () => {
             this.saveCurrentNote();
+        });
+    }
+
+    setupResizableLayout() {
+        const content = document.getElementById('main-content');
+        const splitter = document.getElementById('panel-splitter');
+        if (!content || !splitter) return;
+
+        const minLeft = 460;
+        const minRight = 340;
+
+        const applyLeftWidth = (leftWidth) => {
+            const total = content.clientWidth;
+            const splitterWidth = splitter.offsetWidth || 10;
+            const maxLeft = Math.max(minLeft, total - minRight - splitterWidth);
+            const clamped = Math.max(minLeft, Math.min(leftWidth, maxLeft));
+            document.documentElement.style.setProperty('--left-panel-width', `${clamped}px`);
+            window.dispatchEvent(new Event('deepread:layout-resized'));
+            return clamped;
+        };
+
+        const savedWidth = parseInt(localStorage.getItem(this.leftPanelStorageKey) || '', 10);
+        if (Number.isFinite(savedWidth)) {
+            applyLeftWidth(savedWidth);
+        }
+
+        const onPointerMove = (e) => {
+            if (!this.isResizingPanels) return;
+            const rect = content.getBoundingClientRect();
+            const splitterWidth = splitter.offsetWidth || 10;
+            const nextLeft = e.clientX - rect.left - splitterWidth / 2;
+            applyLeftWidth(nextLeft);
+        };
+
+        const stopResize = () => {
+            if (!this.isResizingPanels) return;
+            this.isResizingPanels = false;
+            document.body.classList.remove('is-resizing-panels');
+            const current = getComputedStyle(document.documentElement)
+                .getPropertyValue('--left-panel-width')
+                .trim();
+            localStorage.setItem(this.leftPanelStorageKey, current.replace('px', ''));
+        };
+
+        splitter.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            this.isResizingPanels = true;
+            document.body.classList.add('is-resizing-panels');
+            splitter.setPointerCapture(e.pointerId);
+        });
+
+        splitter.addEventListener('pointermove', onPointerMove);
+        splitter.addEventListener('pointerup', stopResize);
+        splitter.addEventListener('pointercancel', stopResize);
+        splitter.addEventListener('dblclick', () => {
+            document.documentElement.style.setProperty('--left-panel-width', '60%');
+            localStorage.removeItem(this.leftPanelStorageKey);
+            window.dispatchEvent(new Event('deepread:layout-resized'));
+        });
+
+        window.addEventListener('resize', () => {
+            const value = getComputedStyle(document.documentElement)
+                .getPropertyValue('--left-panel-width')
+                .trim();
+            if (!value.endsWith('px')) return;
+            const px = parseFloat(value);
+            if (!Number.isFinite(px)) return;
+            applyLeftWidth(px);
         });
     }
 

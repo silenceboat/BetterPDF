@@ -65,6 +65,9 @@
     --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
     --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
     --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+
+    /* Layout */
+    --left-panel-width: 60%;
 }
 
 /* Dark theme - Deep study mode */
@@ -334,18 +337,68 @@ html, body {
 /* ==================== Content Area ==================== */
 .content {
     flex: 1;
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(460px, var(--left-panel-width)) 10px minmax(340px, 1fr);
     overflow: hidden;
 }
 
 /* ==================== PDF Panel ==================== */
 .pdf-panel {
-    flex: 1;
     background: var(--bg-primary);
     display: flex;
     flex-direction: column;
     position: relative;
     min-width: 0;
+}
+
+.panel-splitter {
+    position: relative;
+    cursor: col-resize;
+    background: linear-gradient(
+        to right,
+        transparent 0%,
+        transparent 35%,
+        var(--border-color) 35%,
+        var(--border-color) 65%,
+        transparent 65%,
+        transparent 100%
+    );
+    transition: background var(--transition-fast);
+}
+
+.panel-splitter:hover {
+    background: linear-gradient(
+        to right,
+        transparent 0%,
+        transparent 35%,
+        var(--accent-primary) 35%,
+        var(--accent-primary) 65%,
+        transparent 65%,
+        transparent 100%
+    );
+}
+
+.splitter-grip {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 24px;
+    height: 68px;
+    transform: translate(-50%, -50%);
+    border-radius: 999px;
+    background:
+        radial-gradient(circle at 50% 8px, var(--ink-muted) 2px, transparent 2.5px),
+        radial-gradient(circle at 50% 20px, var(--ink-muted) 2px, transparent 2.5px),
+        radial-gradient(circle at 50% 32px, var(--ink-muted) 2px, transparent 2.5px),
+        radial-gradient(circle at 50% 44px, var(--ink-muted) 2px, transparent 2.5px),
+        radial-gradient(circle at 50% 56px, var(--ink-muted) 2px, transparent 2.5px);
+    opacity: 0.55;
+    pointer-events: none;
+}
+
+body.is-resizing-panels {
+    cursor: col-resize;
+    user-select: none;
 }
 
 .pdf-toolbar {
@@ -434,7 +487,7 @@ html, body {
     align-items: flex-start;
     justify-content: center;
     overflow: auto;
-    padding: var(--space-2xl);
+    padding: var(--space-lg);
     position: relative;
 }
 
@@ -574,29 +627,41 @@ html, body {
 
 /* OCR toggle button */
 .ocr-toggle-btn {
-    width: 36px;
+    width: auto;
     height: 36px;
+    padding: 0 12px;
+    gap: 8px;
     border-radius: var(--radius-md);
-    border: none;
-    background: transparent;
+    border: 1px solid var(--border-color);
+    background: var(--bg-elevated);
     color: var(--ink-muted);
     cursor: pointer;
-    font-size: 18px;
+    font-size: 14px;
+    font-weight: 600;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: all var(--transition-fast);
     margin-left: var(--space-sm);
+    box-shadow: var(--shadow-sm);
 }
 
 .ocr-toggle-btn:hover {
-    background: var(--bg-tertiary);
+    background: var(--accent-subtle);
+    border-color: var(--accent-primary);
     color: var(--ink-primary);
+    transform: translateY(-1px);
 }
 
 .ocr-toggle-btn.active {
-    background: var(--accent-subtle);
-    color: var(--accent-primary);
+    background: linear-gradient(180deg, var(--accent-subtle) 0%, rgba(212, 160, 60, 0.2) 100%);
+    border-color: var(--accent-primary);
+    color: var(--ink-primary);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.ocr-toggle-btn span {
+    letter-spacing: 0.01em;
 }
 
 /* OCR active: allow text selection on the overlay layer */
@@ -608,12 +673,11 @@ html, body {
 
 /* ==================== Right Panel ==================== */
 .right-panel {
-    width: 420px;
     background: var(--bg-secondary);
     border-left: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
-    flex-shrink: 0;
+    min-width: 0;
 }
 
 .panel-tabs {
@@ -1257,12 +1321,20 @@ html, body {
 
 /* ==================== Responsive ==================== */
 @media (max-width: 1200px) {
-    .right-panel {
-        width: 380px;
+    .content {
+        grid-template-columns: minmax(420px, var(--left-panel-width)) 10px minmax(320px, 1fr);
     }
 }
 
 @media (max-width: 900px) {
+    .content {
+        display: flex;
+    }
+
+    .panel-splitter {
+        display: none;
+    }
+
     .right-panel {
         position: absolute;
         right: 0;
