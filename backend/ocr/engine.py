@@ -59,7 +59,7 @@ class Engine:
             return False
 
         # Works for both Windows and POSIX paths.
-        match = re.search(r"Cannot open file\s+(.+?inference\.json)", error_message)
+        match = re.search(r"Cannot open file\s+(.+?inference\.json)", error_message, re.IGNORECASE)
         if not match:
             return False
 
@@ -79,7 +79,9 @@ class Engine:
             home_dir / ".paddlex",
             home_dir / ".paddleocr",
         ]
-        if not any(str(resolved_dir).startswith(str(root)) for root in allowed_roots):
+        resolved_norm = os.path.normcase(str(resolved_dir))
+        allowed_norm = [os.path.normcase(str(root)) for root in allowed_roots]
+        if not any(resolved_norm.startswith(root) for root in allowed_norm):
             return False
 
         shutil.rmtree(resolved_dir, ignore_errors=True)
@@ -100,7 +102,15 @@ class Engine:
                 "bbox": list          # 多边形顶点坐标 [[x1,y1], [x2,y2], ...]，单位为像素
             }
         """
-        result = self.ocr_model.predict(image_path)
+        try:
+            result = self.ocr_model.predict(image_path)
+        except Exception as first_error:
+            # Some PaddleOCR builds fail lazily on first predict when cached
+            # model files are corrupted. Recover once and retry.
+            if not self._recover_broken_model_cache(str(first_error)):
+                raise
+            self._ocr_model = None
+            result = self.ocr_model.predict(image_path)
         data = result[0].json["res"]
 
         lines = []
