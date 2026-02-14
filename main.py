@@ -129,8 +129,9 @@ def main():
         js_api=api,
     )
 
-    # Expose the API to JavaScript
-    api.window = window
+    # Keep window reference on a private attribute to avoid pywebview
+    # recursively introspecting a huge WinForms object graph.
+    api._window = window
 
     def _on_webview_started():
         renderer = getattr(webview, "renderer", "unknown")

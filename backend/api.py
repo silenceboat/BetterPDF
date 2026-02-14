@@ -26,6 +26,7 @@ class DeepReadAPI:
         self.current_pdf_path: Optional[str] = None
         self.notes: dict[str, dict] = {}  # note_id -> note data
         self.current_note_id: Optional[str] = None
+        self._window = None
 
         # OCR state
         self._ocr_pipeline = None
@@ -458,11 +459,11 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
             if os.name == "nt":
                 return self._select_pdf_file_windows()
 
-            if not hasattr(self, 'window') or not self.window:
+            if not self._window:
                 return {"success": False, "error": "Window not available"}
 
             import webview
-            result = self.window.create_file_dialog(
+            result = self._window.create_file_dialog(
                 webview.OPEN_DIALOG,
                 file_types=('PDF Files (*.pdf)', 'All Files (*.*)'),
             )
