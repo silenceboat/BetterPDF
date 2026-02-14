@@ -25,6 +25,11 @@ class PDFViewer {
         this.selectionRect = null;
         this.selectedText = '';
 
+        // OCR state
+        this.ocrEnabled = false;
+        this.ocrResults = {};  // page_num -> lines array
+        this.ocrLoading = false;
+
         this.init();
     }
 
@@ -74,6 +79,8 @@ class PDFViewer {
             this.pageCount = result.page_count;
             this.currentPage = 1;
             this.zoom = 1.0;
+            this.ocrResults = {};
+            this.ocrEnabled = false;
 
             this.renderViewer();
             await this.renderPage();
@@ -129,6 +136,12 @@ class PDFViewer {
                         </svg>
                     </button>
                 </div>
+                <button class="ocr-toggle-btn" id="ocr-toggle" title="OCR Text Recognition">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <path d="M7 7h2v2H7zM7 11h2v2H7zM7 15h2v2H7zM11 7h6M11 11h6M11 15h6"/>
+                    </svg>
+                </button>
             </div>
             <div class="pdf-viewport" id="pdf-viewport">
                 <div class="pdf-page-container" id="page-container">
@@ -167,6 +180,9 @@ class PDFViewer {
         document.getElementById('zoom-out')?.addEventListener('click', () => this.zoomOut());
         document.getElementById('zoom-in')?.addEventListener('click', () => this.zoomIn());
         document.getElementById('fit-width')?.addEventListener('click', () => this.fitWidth());
+
+        // OCR toggle
+        document.getElementById('ocr-toggle')?.addEventListener('click', () => this.toggleOcr());
 
         // Selection
         const viewport = document.getElementById('pdf-viewport');
@@ -254,6 +270,11 @@ class PDFViewer {
                     width: result.page_width,
                     height: result.page_height
                 };
+
+                // Re-render OCR overlay if enabled (handles zoom changes)
+                if (this.ocrEnabled && this.ocrResults[this.currentPage]) {
+                    this.renderOcrOverlay(this.ocrResults[this.currentPage]);
+                }
             }
         } catch (error) {
             console.error('Failed to render page:', error);
@@ -283,6 +304,10 @@ class PDFViewer {
         this.renderPage();
         this.updatePageInfo();
         this.clearSelection();
+
+        if (this.ocrEnabled) {
+            this.loadOcrForCurrentPage();
+        }
     }
 
     updatePageInfo() {
@@ -338,6 +363,9 @@ class PDFViewer {
     onSelectionStart(e) {
         // Only left click
         if (e.button !== 0) return;
+
+        // When OCR is active, let native text selection handle it
+        if (this.ocrEnabled) return;
 
         const pageContainer = document.getElementById('page-container');
         const rect = pageContainer.getBoundingClientRect();
@@ -516,7 +544,10 @@ class PDFViewer {
 
         const layer = document.getElementById('selection-layer');
         if (layer) {
-            layer.innerHTML = '';
+            // Only remove selection elements, preserve OCR spans
+            layer.querySelectorAll('.selection-highlight').forEach(el => el.remove());
+            const menu = layer.querySelector('#selection-menu');
+            if (menu) menu.remove();
         }
     }
 
@@ -530,6 +561,107 @@ class PDFViewer {
 
     getSelectedText() {
         return this.selectedText;
+    }
+
+    // ==================== OCR ====================
+
+    toggleOcr() {
+        this.ocrEnabled = !this.ocrEnabled;
+
+        const btn = document.getElementById('ocr-toggle');
+        if (btn) {
+            btn.classList.toggle('active', this.ocrEnabled);
+        }
+
+        const layer = document.getElementById('selection-layer');
+        if (layer) {
+            layer.classList.toggle('ocr-active', this.ocrEnabled);
+        }
+
+        if (this.ocrEnabled) {
+            this.loadOcrForCurrentPage();
+        } else {
+            this.clearOcrOverlay();
+        }
+    }
+
+    async loadOcrForCurrentPage() {
+        if (!this.pageCount) return;
+
+        // Use cached result if available
+        if (this.ocrResults[this.currentPage]) {
+            this.renderOcrOverlay(this.ocrResults[this.currentPage]);
+            return;
+        }
+
+        if (this.ocrLoading) return;
+        this.ocrLoading = true;
+
+        window.app?.showToast('Running OCR...', 'info');
+
+        try {
+            const result = await API.ocrPage(this.currentPage);
+            if (result.success) {
+                this.ocrResults[this.currentPage] = result.lines;
+                window.app?.showToast(`OCR complete: ${result.lines.length} lines found`, 'success');
+                // Only render if still on the same page and OCR still enabled
+                if (this.ocrEnabled) {
+                    this.renderOcrOverlay(result.lines);
+                }
+            } else {
+                window.app?.showToast(`OCR failed: ${result.error}`, 'error');
+            }
+        } catch (error) {
+            console.error('OCR failed:', error);
+            window.app?.showToast('OCR failed', 'error');
+        } finally {
+            this.ocrLoading = false;
+        }
+    }
+
+    renderOcrOverlay(lines) {
+        this.clearOcrOverlay();
+
+        if (!lines || !lines.length || !this.pageDimensions) return;
+
+        const layer = document.getElementById('selection-layer');
+        const img = document.getElementById('page-image');
+        if (!layer || !img) return;
+
+        const imgWidth = img.clientWidth;
+        const imgHeight = img.clientHeight;
+        const pageWidth = this.pageDimensions.width;
+        const pageHeight = this.pageDimensions.height;
+        const scaleX = imgWidth / pageWidth;
+        const scaleY = imgHeight / pageHeight;
+
+        for (const line of lines) {
+            const span = document.createElement('span');
+            span.className = 'ocr-text-span';
+            span.textContent = line.text;
+
+            // PDF coordinate system: Y=0 at bottom, rect.y is bottom edge
+            // Screen coordinate system: Y=0 at top
+            const screenX = line.x * scaleX;
+            const screenY = (pageHeight - line.y - line.height) * scaleY;
+            const screenW = line.width * scaleX;
+            const screenH = line.height * scaleY;
+
+            span.style.left = `${screenX}px`;
+            span.style.top = `${screenY}px`;
+            span.style.width = `${screenW}px`;
+            span.style.height = `${screenH}px`;
+            span.style.fontSize = `${screenH * 0.85}px`;
+
+            layer.appendChild(span);
+        }
+    }
+
+    clearOcrOverlay() {
+        const layer = document.getElementById('selection-layer');
+        if (layer) {
+            layer.querySelectorAll('.ocr-text-span').forEach(el => el.remove());
+        }
     }
 }
 

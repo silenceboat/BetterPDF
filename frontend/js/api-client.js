@@ -63,6 +63,13 @@ const API = {
                 success: true,
                 response: 'Mock AI action result for: ' + args[0]
             }),
+            ocr_page: () => ({
+                success: true,
+                lines: [
+                    { text: 'Sample OCR text line 1', confidence: 0.95, x: 72, y: 700, width: 400, height: 14 },
+                    { text: 'Another recognized line', confidence: 0.88, x: 72, y: 680, width: 350, height: 14 }
+                ]
+            }),
             get_app_info: () => ({
                 name: 'DeepRead AI',
                 version: '0.2.0 (Mock)'
@@ -119,6 +126,15 @@ const API = {
      */
     async getPdfMetadata() {
         return this.call('get_pdf_metadata');
+    },
+
+    /**
+     * Run OCR on a page and get text lines with bounding boxes
+     * @param {number} pageNum - 1-based page number
+     * @returns {Promise<{success: boolean, lines?: Array}>}
+     */
+    async ocrPage(pageNum) {
+        return this.call('ocr_page', pageNum);
     },
 
     /**

@@ -552,6 +552,60 @@ html, body {
 .selection-menu-item[data-action="define"]::before { content: '📖'; }
 .selection-menu-item[data-action="ask"]::before { content: '✨'; }
 
+/* OCR transparent text layer */
+.ocr-text-span {
+    position: absolute;
+    color: transparent;
+    background: transparent;
+    overflow: hidden;
+    white-space: nowrap;
+    line-height: 1;
+    pointer-events: auto;
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: text;
+    font-family: sans-serif;
+}
+
+.ocr-text-span::selection {
+    background: var(--accent-subtle);
+    color: transparent;
+}
+
+/* OCR toggle button */
+.ocr-toggle-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-md);
+    border: none;
+    background: transparent;
+    color: var(--ink-muted);
+    cursor: pointer;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+    margin-left: var(--space-sm);
+}
+
+.ocr-toggle-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--ink-primary);
+}
+
+.ocr-toggle-btn.active {
+    background: var(--accent-subtle);
+    color: var(--accent-primary);
+}
+
+/* OCR active: allow text selection on the overlay layer */
+.selection-layer.ocr-active {
+    pointer-events: auto;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
 /* ==================== Right Panel ==================== */
 .right-panel {
     width: 420px;

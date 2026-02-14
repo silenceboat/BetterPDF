@@ -4,11 +4,14 @@ PyWebView API Bridge - Exposes Python backend to JavaScript frontend.
 
 import json
 import os
+import tempfile
+import shutil
 from pathlib import Path
 from typing import Optional
 
 from .pdf_engine import PDFEngine
 from .ai_service import AIService
+from .ocr.pipeline import OCRPipeline
 
 
 class DeepReadAPI:
@@ -26,6 +29,11 @@ class DeepReadAPI:
         self.notes: dict[str, dict] = {}  # note_id -> note data
         self.current_note_id: Optional[str] = None
 
+        # OCR state
+        self._ocr_pipeline: Optional[OCRPipeline] = None
+        self._ocr_cache: dict = {}  # page_num -> simplified lines
+        self._ocr_temp_dir: Optional[str] = None
+
     # ==================== PDF Operations ====================
 
     def open_pdf(self, file_path: str) -> dict:
@@ -42,6 +50,7 @@ class DeepReadAPI:
             # Close existing PDF if any
             if self.pdf_engine:
                 self.pdf_engine.close()
+                self._cleanup_ocr()
 
             self.pdf_engine = PDFEngine(file_path)
             self.current_pdf_path = file_path
@@ -147,6 +156,77 @@ class DeepReadAPI:
             "success": True,
             "metadata": self.pdf_engine.get_metadata(),
         }
+
+    # ==================== OCR Operations ====================
+
+    def _cleanup_ocr(self):
+        """Clean up OCR pipeline, cache, and temp directory."""
+        self._ocr_pipeline = None
+        self._ocr_cache = {}
+        if self._ocr_temp_dir and os.path.exists(self._ocr_temp_dir):
+            shutil.rmtree(self._ocr_temp_dir, ignore_errors=True)
+            self._ocr_temp_dir = None
+
+    def ocr_page(self, page_num: int) -> dict:
+        """
+        Run OCR on a single page and return text lines with bounding boxes.
+
+        Args:
+            page_num: 1-based page number
+
+        Returns:
+            Dict with success status and list of text lines with bbox info.
+            Each line has: text, confidence, x, y, width, height (in PDF points,
+            Y=0 at page bottom).
+        """
+        if not self.pdf_engine:
+            return {"success": False, "error": "No PDF open"}
+
+        try:
+            # Return cached result if available
+            if page_num in self._ocr_cache:
+                return {"success": True, "lines": self._ocr_cache[page_num]}
+
+            # Lazy-init the OCR pipeline
+            if self._ocr_pipeline is None:
+                self._ocr_temp_dir = tempfile.mkdtemp(prefix="deepread_ocr_")
+                self._ocr_pipeline = OCRPipeline(
+                    self.current_pdf_path, self._ocr_temp_dir
+                )
+
+            # Run OCR on the single page
+            results = self._ocr_pipeline.run(
+                first_page=page_num, last_page=page_num
+            )
+
+            # results is list[list[dict]], one entry per page
+            page_lines = results[0] if results else []
+
+            # Simplify polygon bbox to rectangle {x, y, width, height}
+            simplified = []
+            for line in page_lines:
+                bbox = line["bbox"]  # list of [x, y] polygon vertices
+                xs = [pt[0] for pt in bbox]
+                ys = [pt[1] for pt in bbox]
+                x_min = min(xs)
+                y_min = min(ys)
+                x_max = max(xs)
+                y_max = max(ys)
+                simplified.append({
+                    "text": line["text"],
+                    "confidence": line["confidence"],
+                    "x": x_min,
+                    "y": y_min,
+                    "width": x_max - x_min,
+                    "height": y_max - y_min,
+                })
+
+            # Cache and return
+            self._ocr_cache[page_num] = simplified
+            return {"success": True, "lines": simplified}
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     # ==================== AI Operations ====================
 
