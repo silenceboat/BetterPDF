@@ -395,26 +395,23 @@ class DeepReadAPI:
         """
         Open a file dialog to select a PDF file.
 
+        Uses pywebview's native file dialog which handles threading correctly.
+
         Returns:
             Dict with selected file path or cancel status
         """
         try:
-            import tkinter as tk
-            from tkinter import filedialog
+            if not hasattr(self, 'window') or not self.window:
+                return {"success": False, "error": "Window not available"}
 
-            # Create hidden root window
-            root = tk.Tk()
-            root.withdraw()
-
-            file_path = filedialog.askopenfilename(
-                title="Open PDF",
-                filetypes=[("PDF Files", "*.pdf"), ("All Files", "*.*")],
+            import webview
+            result = self.window.create_file_dialog(
+                webview.OPEN_DIALOG,
+                file_types=('PDF Files (*.pdf)', 'All Files (*.*)'),
             )
 
-            root.destroy()
-
-            if file_path:
-                return {"success": True, "file_path": file_path}
+            if result and len(result) > 0:
+                return {"success": True, "file_path": str(result[0])}
             else:
                 return {"success": False, "cancelled": True}
         except Exception as e:
