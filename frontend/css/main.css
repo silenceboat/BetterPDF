@@ -412,7 +412,8 @@ body.is-resizing-panels {
     flex-shrink: 0;
 }
 
-.pdf-toolbar button {
+.pdf-toolbar > button,
+.pdf-toolbar .zoom-controls > button {
     width: 36px;
     height: 36px;
     border-radius: var(--radius-md);
@@ -427,12 +428,14 @@ body.is-resizing-panels {
     transition: all var(--transition-fast);
 }
 
-.pdf-toolbar button:hover {
+.pdf-toolbar > button:hover,
+.pdf-toolbar .zoom-controls > button:hover {
     background: var(--bg-tertiary);
     color: var(--ink-primary);
 }
 
-.pdf-toolbar button:disabled {
+.pdf-toolbar > button:disabled,
+.pdf-toolbar .zoom-controls > button:disabled {
     opacity: 0.4;
     cursor: not-allowed;
 }
@@ -688,7 +691,12 @@ body.is-resizing-panels {
     gap: 6px;
 }
 
+.ocr-mode-menu[hidden] {
+    display: none !important;
+}
+
 .ocr-mode-item {
+    width: 100%;
     border: none;
     background: var(--bg-secondary);
     color: var(--ink-secondary);
