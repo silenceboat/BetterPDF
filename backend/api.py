@@ -414,13 +414,21 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
             ["pwsh", "-NoProfile", "-Command", script],
         ]
 
+        def _decode_output(data: bytes) -> str:
+            for enc in ("utf-8-sig", "utf-8", "gbk", "utf-16le"):
+                try:
+                    return data.decode(enc).strip()
+                except Exception:
+                    continue
+            return data.decode(errors="replace").strip()
+
         last_error: Optional[str] = None
         for cmd in shell_cmds:
             try:
                 completed = subprocess.run(
                     cmd,
                     capture_output=True,
-                    text=True,
+                    text=False,
                     timeout=120,
                 )
             except FileNotFoundError:
@@ -431,11 +439,11 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
                 continue
 
             if completed.returncode != 0:
-                stderr = completed.stderr.strip()
+                stderr = _decode_output(completed.stderr or b"")
                 last_error = stderr or f"{cmd[0]} exited with code {completed.returncode}"
                 continue
 
-            file_path = completed.stdout.strip()
+            file_path = _decode_output(completed.stdout or b"")
             if file_path:
                 return {"success": True, "file_path": file_path}
             return {"success": False, "cancelled": True}

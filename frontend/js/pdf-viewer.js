@@ -52,7 +52,7 @@ class PDFViewer {
                 </div>
                 <div class="pdf-placeholder-text">No PDF Open</div>
                 <div class="pdf-placeholder-hint">Click "Open PDF" to get started</div>
-                <button class="btn btn-primary" id="open-pdf-btn">
+                <button class="btn btn-primary" id="open-pdf-placeholder-btn">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M6 22a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2H6Z"/>
                         <path d="M14 2v6h6"/>
@@ -64,7 +64,7 @@ class PDFViewer {
             </div>
         `;
 
-        const openBtn = document.getElementById('open-pdf-btn');
+        const openBtn = this.container.querySelector('#open-pdf-placeholder-btn');
         if (openBtn) {
             openBtn.addEventListener('click', () => {
                 window.app?.openPdf();
