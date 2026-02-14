@@ -1,4 +1,5 @@
 import os
+import fitz  # PyMuPDF
 
 class Renderer:
     def __init__(self, pdf_path, output_folder):
@@ -25,15 +26,31 @@ class Renderer:
         if not os.path.exists(self.output_folder):
             os.makedirs(self.output_folder)
 
-        from pdf2image import convert_from_path
-        pages = convert_from_path(self.pdf_path, first_page=first_page, last_page=last_page, dpi=dpi)
-
         image_paths = []
-        for i, page in enumerate(pages, start=first_page):
-            page_name = os.path.splitext(os.path.basename(self.pdf_path))[0] + f'_page{i}_dpi{dpi}.png'
-            page_save_path = os.path.join(self.output_folder, page_name)
-            page.save(page_save_path, 'PNG')
-            image_paths.append(page_save_path)
+        doc = fitz.open(self.pdf_path)
+        try:
+            page_count = len(doc)
+            if page_count == 0:
+                return image_paths
+
+            start = max(1, int(first_page))
+            end = page_count if last_page is None else min(int(last_page), page_count)
+            if start > end:
+                return image_paths
+
+            # PDF points are at 72 DPI; scale matrix to target DPI.
+            scale = float(dpi) / 72.0
+            matrix = fitz.Matrix(scale, scale)
+
+            for page_num in range(start, end + 1):
+                page = doc[page_num - 1]
+                pix = page.get_pixmap(matrix=matrix, alpha=False)
+                page_name = os.path.splitext(os.path.basename(self.pdf_path))[0] + f'_page{page_num}_dpi{dpi}.png'
+                page_save_path = os.path.join(self.output_folder, page_name)
+                pix.save(page_save_path)
+                image_paths.append(page_save_path)
+        finally:
+            doc.close()
 
         return image_paths
 

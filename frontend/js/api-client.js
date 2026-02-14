@@ -70,6 +70,12 @@ const API = {
                     { text: 'Another recognized line', confidence: 0.88, x: 72, y: 680, width: 350, height: 14 }
                 ]
             }),
+            ocr_document: () => ({
+                success: true,
+                page_count: 10,
+                total_lines: 280,
+                cached: false,
+            }),
             get_app_info: () => ({
                 name: 'DeepRead AI',
                 version: '0.2.0 (Mock)'
@@ -135,6 +141,14 @@ const API = {
      */
     async ocrPage(pageNum) {
         return this.call('ocr_page', pageNum);
+    },
+
+    /**
+     * Run OCR for the whole document and cache all pages
+     * @returns {Promise<{success: boolean, page_count?: number, total_lines?: number, error?: string}>}
+     */
+    async ocrDocument() {
+        return this.call('ocr_document');
     },
 
     /**

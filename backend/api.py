@@ -166,6 +166,36 @@ class DeepReadAPI:
             shutil.rmtree(self._ocr_temp_dir, ignore_errors=True)
             self._ocr_temp_dir = None
 
+    def _ensure_ocr_pipeline(self):
+        """Lazy-init OCR pipeline."""
+        if self._ocr_pipeline is not None:
+            return
+
+        from .ocr.pipeline import OCRPipeline
+        self._ocr_temp_dir = tempfile.mkdtemp(prefix="deepread_ocr_")
+        self._ocr_pipeline = OCRPipeline(self.current_pdf_path, self._ocr_temp_dir)
+
+    def _simplify_ocr_lines(self, page_lines: list[dict]) -> list[dict]:
+        """Convert polygon bboxes to {x, y, width, height} rectangles."""
+        simplified: list[dict] = []
+        for line in page_lines:
+            bbox = line["bbox"]  # list of [x, y] polygon vertices
+            xs = [pt[0] for pt in bbox]
+            ys = [pt[1] for pt in bbox]
+            x_min = min(xs)
+            y_min = min(ys)
+            x_max = max(xs)
+            y_max = max(ys)
+            simplified.append({
+                "text": line["text"],
+                "confidence": line["confidence"],
+                "x": x_min,
+                "y": y_min,
+                "width": x_max - x_min,
+                "height": y_max - y_min,
+            })
+        return simplified
+
     def ocr_page(self, page_num: int) -> dict:
         """
         Run OCR on a single page and return text lines with bounding boxes.
@@ -186,13 +216,7 @@ class DeepReadAPI:
             if page_num in self._ocr_cache:
                 return {"success": True, "lines": self._ocr_cache[page_num]}
 
-            # Lazy-init the OCR pipeline (import deferred to avoid slow startup)
-            if self._ocr_pipeline is None:
-                from .ocr.pipeline import OCRPipeline
-                self._ocr_temp_dir = tempfile.mkdtemp(prefix="deepread_ocr_")
-                self._ocr_pipeline = OCRPipeline(
-                    self.current_pdf_path, self._ocr_temp_dir
-                )
+            self._ensure_ocr_pipeline()
 
             # Run OCR on the single page
             results = self._ocr_pipeline.run(
@@ -202,29 +226,55 @@ class DeepReadAPI:
             # results is list[list[dict]], one entry per page
             page_lines = results[0] if results else []
 
-            # Simplify polygon bbox to rectangle {x, y, width, height}
-            simplified = []
-            for line in page_lines:
-                bbox = line["bbox"]  # list of [x, y] polygon vertices
-                xs = [pt[0] for pt in bbox]
-                ys = [pt[1] for pt in bbox]
-                x_min = min(xs)
-                y_min = min(ys)
-                x_max = max(xs)
-                y_max = max(ys)
-                simplified.append({
-                    "text": line["text"],
-                    "confidence": line["confidence"],
-                    "x": x_min,
-                    "y": y_min,
-                    "width": x_max - x_min,
-                    "height": y_max - y_min,
-                })
+            simplified = self._simplify_ocr_lines(page_lines)
 
             # Cache and return
             self._ocr_cache[page_num] = simplified
             return {"success": True, "lines": simplified}
 
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def ocr_document(self) -> dict:
+        """
+        Run OCR for the whole document and cache all pages.
+
+        Returns:
+            Dict with success status, processed page count, and total lines.
+        """
+        if not self.pdf_engine:
+            return {"success": False, "error": "No PDF open"}
+
+        page_count = self.pdf_engine.page_count
+        if page_count <= 0:
+            return {"success": True, "page_count": 0, "total_lines": 0}
+
+        try:
+            # Fast path: already cached all pages
+            if len(self._ocr_cache) >= page_count:
+                total_lines = sum(len(lines) for lines in self._ocr_cache.values())
+                return {
+                    "success": True,
+                    "page_count": page_count,
+                    "total_lines": total_lines,
+                    "cached": True,
+                }
+
+            self._ensure_ocr_pipeline()
+            results = self._ocr_pipeline.run(first_page=1, last_page=page_count)
+
+            total_lines = 0
+            for idx, page_lines in enumerate(results, start=1):
+                simplified = self._simplify_ocr_lines(page_lines)
+                self._ocr_cache[idx] = simplified
+                total_lines += len(simplified)
+
+            return {
+                "success": True,
+                "page_count": page_count,
+                "total_lines": total_lines,
+                "cached": False,
+            }
         except Exception as e:
             return {"success": False, "error": str(e)}
 

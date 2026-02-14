@@ -27,10 +27,17 @@ class PDFViewer {
 
         // OCR state
         this.ocrEnabled = false;
+        this.ocrMode = 'page'; // 'page' or 'document'
         this.ocrResults = {};  // page_num -> lines array
         this.ocrLoading = false;
         this.autoFit = true;
         this._layoutResizeRaf = null;
+        this._onDocumentClick = (e) => {
+            if (e.target && e.target.closest && e.target.closest('#ocr-entry')) {
+                return;
+            }
+            this.hideOcrModeMenu();
+        };
 
         this.init();
     }
@@ -40,6 +47,7 @@ class PDFViewer {
         this.setupKeyboardShortcuts();
         window.addEventListener('resize', () => this.onLayoutResize());
         window.addEventListener('deepread:layout-resized', () => this.onLayoutResize());
+        document.addEventListener('click', this._onDocumentClick);
     }
 
     renderPlaceholder() {
@@ -144,13 +152,22 @@ class PDFViewer {
                         </svg>
                     </button>
                 </div>
-                <button class="ocr-toggle-btn" id="ocr-toggle" title="OCR Text Recognition">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="3" y="3" width="18" height="18" rx="2"/>
-                        <path d="M7 7h2v2H7zM7 11h2v2H7zM7 15h2v2H7zM11 7h6M11 11h6M11 15h6"/>
-                    </svg>
-                    <span>OCR Text</span>
-                </button>
+                <div class="ocr-entry" id="ocr-entry">
+                    <button class="ocr-toggle-btn" id="ocr-toggle" title="OCR Text Recognition">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="3" width="18" height="18" rx="2"/>
+                            <path d="M7 7h2v2H7zM7 11h2v2H7zM7 15h2v2H7zM11 7h6M11 11h6M11 15h6"/>
+                        </svg>
+                        <span>OCR Text</span>
+                        <svg class="ocr-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="m6 9 6 6 6-6"/>
+                        </svg>
+                    </button>
+                    <div class="ocr-mode-menu" id="ocr-mode-menu" hidden>
+                        <button class="ocr-mode-item" id="ocr-mode-page">OCR This Page</button>
+                        <button class="ocr-mode-item" id="ocr-mode-document">OCR Whole PDF</button>
+                    </div>
+                </div>
             </div>
             <div class="pdf-viewport" id="pdf-viewport">
                 <div class="pdf-page-container" id="page-container">
@@ -190,8 +207,21 @@ class PDFViewer {
         document.getElementById('zoom-in')?.addEventListener('click', () => this.zoomIn());
         document.getElementById('fit-width')?.addEventListener('click', () => this.fitWidth());
 
-        // OCR toggle
-        document.getElementById('ocr-toggle')?.addEventListener('click', () => this.toggleOcr());
+        // OCR controls
+        document.getElementById('ocr-toggle')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.onOcrButtonClicked();
+        });
+        document.getElementById('ocr-mode-page')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.hideOcrModeMenu();
+            this.enableOcr('page');
+        });
+        document.getElementById('ocr-mode-document')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.hideOcrModeMenu();
+            this.enableOcr('document');
+        });
 
         // Selection
         const viewport = document.getElementById('pdf-viewport');
@@ -590,24 +620,58 @@ class PDFViewer {
 
     // ==================== OCR ====================
 
-    toggleOcr() {
-        this.ocrEnabled = !this.ocrEnabled;
+    onOcrButtonClicked() {
+        if (this.ocrEnabled) {
+            this.disableOcr();
+            return;
+        }
+        this.toggleOcrModeMenu();
+    }
+
+    toggleOcrModeMenu() {
+        const menu = document.getElementById('ocr-mode-menu');
+        if (!menu) return;
+        menu.hidden = !menu.hidden;
+    }
+
+    hideOcrModeMenu() {
+        const menu = document.getElementById('ocr-mode-menu');
+        if (!menu) return;
+        menu.hidden = true;
+    }
+
+    enableOcr(mode = 'page') {
+        this.ocrEnabled = true;
+        this.ocrMode = mode;
 
         const btn = document.getElementById('ocr-toggle');
         if (btn) {
-            btn.classList.toggle('active', this.ocrEnabled);
+            btn.classList.add('active');
         }
 
         const layer = document.getElementById('selection-layer');
         if (layer) {
-            layer.classList.toggle('ocr-active', this.ocrEnabled);
+            layer.classList.add('ocr-active');
         }
 
-        if (this.ocrEnabled) {
-            this.loadOcrForCurrentPage();
+        if (mode === 'document') {
+            this.loadOcrForDocument();
         } else {
-            this.clearOcrOverlay();
+            this.loadOcrForCurrentPage();
         }
+    }
+
+    disableOcr() {
+        this.ocrEnabled = false;
+        const btn = document.getElementById('ocr-toggle');
+        if (btn) {
+            btn.classList.remove('active');
+        }
+        const layer = document.getElementById('selection-layer');
+        if (layer) {
+            layer.classList.remove('ocr-active');
+        }
+        this.clearOcrOverlay();
     }
 
     async loadOcrForCurrentPage() {
@@ -622,7 +686,7 @@ class PDFViewer {
         if (this.ocrLoading) return;
         this.ocrLoading = true;
 
-        window.app?.showToast('Running OCR...', 'info');
+        window.app?.showToast('Running OCR for current page...', 'info');
 
         try {
             const result = await API.ocrPage(this.currentPage);
@@ -639,6 +703,42 @@ class PDFViewer {
         } catch (error) {
             console.error('OCR failed:', error);
             window.app?.showToast('OCR failed', 'error');
+        } finally {
+            this.ocrLoading = false;
+        }
+    }
+
+    async loadOcrForDocument() {
+        if (!this.pageCount || this.ocrLoading) return;
+
+        this.ocrLoading = true;
+        window.app?.showToast(`Running OCR for all ${this.pageCount} pages...`, 'info', 4500);
+
+        try {
+            const result = await API.ocrDocument();
+            if (!result.success) {
+                window.app?.showToast(`OCR failed: ${result.error}`, 'error', 6000);
+                this.disableOcr();
+                return;
+            }
+
+            // Render current page from cache populated by backend full-document OCR.
+            const currentResult = await API.ocrPage(this.currentPage);
+            if (currentResult.success) {
+                this.ocrResults[this.currentPage] = currentResult.lines;
+                if (this.ocrEnabled) {
+                    this.renderOcrOverlay(currentResult.lines);
+                }
+            }
+            window.app?.showToast(
+                `OCR complete: ${result.page_count || this.pageCount} pages, ${result.total_lines || 0} lines`,
+                'success',
+                4500
+            );
+        } catch (error) {
+            console.error('OCR failed:', error);
+            window.app?.showToast('OCR failed', 'error');
+            this.disableOcr();
         } finally {
             this.ocrLoading = false;
         }
