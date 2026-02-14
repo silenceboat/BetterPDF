@@ -778,7 +778,7 @@ class PDFViewer {
         if (!this.pageCount || this.ocrLoading) return;
 
         this.ocrLoading = true;
-        this.showOcrProgress('OCR Entire PDF', `0/${this.pageCount} · 0%`, false);
+        this.showOcrProgress('OCR Entire PDF', 'Preparing OCR model...', true);
         window.app?.showToast(`Running OCR for all ${this.pageCount} pages...`, 'info', 4500);
 
         try {
@@ -790,6 +790,8 @@ class PDFViewer {
             }
 
             const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+            const startTime = Date.now();
+            let showedLongWaitHint = false;
             while (this.ocrEnabled) {
                 const progress = await API.getOcrProgress();
                 if (!progress.success) {
@@ -798,11 +800,21 @@ class PDFViewer {
                     return;
                 }
 
-                this.updateOcrProgress(
-                    progress.processed_pages || 0,
-                    progress.total_pages || this.pageCount,
-                    progress.total_lines || 0
-                );
+                const stage = progress.stage || '';
+                if (stage === 'loading_model') {
+                    this.showOcrProgress(
+                        'OCR Entire PDF',
+                        'Downloading/initializing OCR model (first run may take several minutes)...',
+                        true
+                    );
+                } else {
+                    this.showOcrProgress('OCR Entire PDF', '', false);
+                    this.updateOcrProgress(
+                        progress.processed_pages || 0,
+                        progress.total_pages || this.pageCount,
+                        progress.total_lines || 0
+                    );
+                }
 
                 if (progress.status === 'completed') {
                     const currentResult = await API.ocrPage(this.currentPage);
@@ -824,6 +836,15 @@ class PDFViewer {
                     window.app?.showToast(`OCR failed: ${progress.error || 'Unknown error'}`, 'error', 7000);
                     this.disableOcr();
                     return;
+                }
+
+                if (!showedLongWaitHint && Date.now() - startTime > 45000) {
+                    showedLongWaitHint = true;
+                    window.app?.showToast(
+                        'OCR model download is slow. Keep app open; first run can take 2-10 minutes depending on network.',
+                        'warning',
+                        8000
+                    );
                 }
 
                 await sleep(350);

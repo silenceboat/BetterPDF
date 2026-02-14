@@ -7,6 +7,19 @@ from pathlib import Path
 class Engine:
     def __init__(self, ocr_model=None):
         self._ocr_model = ocr_model
+        self._configure_model_source()
+
+    def _configure_model_source(self):
+        """
+        Configure model download source for better availability on Windows.
+
+        PaddleOCR 3.x defaults to HuggingFace; on many CN networks this is
+        unreliable. Respect user-provided env var, otherwise fall back to BOS.
+        """
+        if "PADDLE_PDX_MODEL_SOURCE" in os.environ:
+            return
+        if os.name == "nt":
+            os.environ["PADDLE_PDX_MODEL_SOURCE"] = "BOS"
 
     @property
     def ocr_model(self):

@@ -38,6 +38,7 @@ class DeepReadAPI:
         self._ocr_progress_lock = threading.Lock()
         self._ocr_progress = {
             "status": "idle",  # idle | running | completed | error
+            "stage": "idle",   # idle | loading_model | ocr_pages | completed | error
             "job_id": 0,
             "processed_pages": 0,
             "total_pages": 0,
@@ -181,6 +182,7 @@ class DeepReadAPI:
         with self._ocr_progress_lock:
             self._ocr_progress = {
                 "status": "idle",
+                "stage": "idle",
                 "job_id": self._ocr_job_id,
                 "processed_pages": 0,
                 "total_pages": 0,
@@ -237,7 +239,6 @@ class DeepReadAPI:
         Background worker for full-document OCR with progress updates.
         """
         try:
-            self._ensure_ocr_pipeline()
             total_lines = 0
 
             # Count existing cached lines as progress baseline.
@@ -249,12 +250,17 @@ class DeepReadAPI:
 
             self._update_ocr_progress(
                 status="running",
+                stage="loading_model",
                 job_id=job_id,
                 processed_pages=processed_pages,
                 total_pages=total_pages,
                 total_lines=total_lines,
                 error="",
             )
+
+            # May take several minutes on first run (model download + init).
+            self._ensure_ocr_pipeline()
+            self._update_ocr_progress(stage="ocr_pages")
 
             for page_num in range(1, total_pages + 1):
                 # If a new PDF is opened, cancel this stale job.
@@ -283,6 +289,7 @@ class DeepReadAPI:
             if job_id == self._ocr_job_id:
                 self._update_ocr_progress(
                     status="completed",
+                    stage="completed",
                     job_id=job_id,
                     processed_pages=total_pages,
                     total_pages=total_pages,
@@ -293,6 +300,7 @@ class DeepReadAPI:
             if job_id == self._ocr_job_id:
                 self._update_ocr_progress(
                     status="error",
+                    stage="error",
                     job_id=job_id,
                     error=str(e),
                 )
@@ -381,6 +389,7 @@ class DeepReadAPI:
         if page_count <= 0:
             self._update_ocr_progress(
                 status="completed",
+                stage="completed",
                 processed_pages=0,
                 total_pages=0,
                 total_lines=0,
@@ -403,6 +412,7 @@ class DeepReadAPI:
             total_lines = sum(len(lines) for lines in self._ocr_cache.values())
             self._update_ocr_progress(
                 status="completed",
+                stage="completed",
                 processed_pages=page_count,
                 total_pages=page_count,
                 total_lines=total_lines,
@@ -419,6 +429,7 @@ class DeepReadAPI:
         job_id = self._ocr_job_id
         self._update_ocr_progress(
             status="running",
+            stage="loading_model",
             job_id=job_id,
             processed_pages=0,
             total_pages=page_count,
