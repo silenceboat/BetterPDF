@@ -61,14 +61,21 @@ def _has_webview2_runtime() -> bool:
 
     for root in key_roots:
         for guid in guids:
-            key_path = rf"SOFTWARE\Microsoft\EdgeUpdate\Clients\{guid}"
-            try:
-                with winreg.OpenKey(root, key_path) as key:
-                    version, _ = winreg.QueryValueEx(key, "pv")
-                if _version_gte(str(version), minimum):
-                    return True
-            except Exception:
-                continue
+            candidate_paths = [rf"SOFTWARE\Microsoft\EdgeUpdate\Clients\{guid}"]
+            # On 64-bit Windows, WebView2 can be registered under WOW6432Node.
+            if root == winreg.HKEY_LOCAL_MACHINE:
+                candidate_paths.append(
+                    rf"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{guid}"
+                )
+
+            for key_path in candidate_paths:
+                try:
+                    with winreg.OpenKey(root, key_path) as key:
+                        version, _ = winreg.QueryValueEx(key, "pv")
+                    if _version_gte(str(version), minimum):
+                        return True
+                except Exception:
+                    continue
 
     return False
 
