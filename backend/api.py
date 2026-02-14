@@ -2,12 +2,11 @@
 PyWebView API Bridge - Exposes Python backend to JavaScript frontend.
 """
 
-import json
 import os
 import tempfile
 import shutil
-from pathlib import Path
 from typing import Optional
+import subprocess
 
 from .pdf_engine import PDFEngine
 from .ai_service import AIService
@@ -391,16 +390,74 @@ class DeepReadAPI:
 
     # ==================== Utility Operations ====================
 
+    def _select_pdf_file_windows(self) -> dict:
+        """
+        Select a PDF file on Windows using a separate PowerShell process.
+
+        This avoids pywebview/WinForms cross-thread dialog issues that can
+        freeze the app when called from JS API worker threads.
+        """
+        script = r"""
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Filter = "PDF Files (*.pdf)|*.pdf|All Files (*.*)|*.*"
+$dialog.Multiselect = $false
+$dialog.RestoreDirectory = $true
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+    [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+    Write-Output $dialog.FileName
+}
+"""
+        shell_cmds = [
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            ["pwsh", "-NoProfile", "-Command", script],
+        ]
+
+        last_error: Optional[str] = None
+        for cmd in shell_cmds:
+            try:
+                completed = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+            except FileNotFoundError:
+                last_error = f"Command not found: {cmd[0]}"
+                continue
+            except Exception as e:
+                last_error = str(e)
+                continue
+
+            if completed.returncode != 0:
+                stderr = completed.stderr.strip()
+                last_error = stderr or f"{cmd[0]} exited with code {completed.returncode}"
+                continue
+
+            file_path = completed.stdout.strip()
+            if file_path:
+                return {"success": True, "file_path": file_path}
+            return {"success": False, "cancelled": True}
+
+        return {
+            "success": False,
+            "error": f"Failed to open file dialog on Windows. {last_error or ''}".strip(),
+        }
+
     def select_pdf_file(self) -> dict:
         """
         Open a file dialog to select a PDF file.
 
-        Uses pywebview's native file dialog which handles threading correctly.
+        Uses a Windows-specific PowerShell dialog on Win32 to avoid pywebview
+        cross-thread deadlocks, and pywebview native dialogs on other platforms.
 
         Returns:
             Dict with selected file path or cancel status
         """
         try:
+            if os.name == "nt":
+                return self._select_pdf_file_windows()
+
             if not hasattr(self, 'window') or not self.window:
                 return {"success": False, "error": "Window not available"}
 
