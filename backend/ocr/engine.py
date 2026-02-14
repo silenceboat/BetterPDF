@@ -1,3 +1,9 @@
+import os
+import re
+import shutil
+from pathlib import Path
+
+
 class Engine:
     def __init__(self, ocr_model=None):
         self._ocr_model = ocr_model
@@ -6,13 +12,78 @@ class Engine:
     def ocr_model(self):
         """Lazy-load PaddleOCR to avoid blocking startup."""
         if self._ocr_model is None:
-            from paddleocr import PaddleOCR
-            self._ocr_model = PaddleOCR(
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
-                use_textline_orientation=False
-            )
+            self._ocr_model = self._create_ocr_model_with_recovery()
         return self._ocr_model
+
+    def _build_ocr_model(self):
+        """
+        Build PaddleOCR model with mobile defaults when supported.
+        """
+        from paddleocr import PaddleOCR
+
+        kwargs = {
+            "use_doc_orientation_classify": False,
+            "use_doc_unwarping": False,
+            "use_textline_orientation": False,
+        }
+
+        # Prefer mobile models to reduce download size and improve cold-start.
+        try:
+            return PaddleOCR(
+                text_detection_model_name="PP-OCRv5_mobile_det",
+                text_recognition_model_name="PP-OCRv5_mobile_rec",
+                **kwargs,
+            )
+        except TypeError:
+            # Older/newer PaddleOCR builds may not expose these kwargs.
+            return PaddleOCR(**kwargs)
+
+    def _create_ocr_model_with_recovery(self):
+        """
+        Create OCR model and recover from broken local model cache once.
+        """
+        try:
+            return self._build_ocr_model()
+        except Exception as first_error:
+            if not self._recover_broken_model_cache(str(first_error)):
+                raise
+            # Retry once after removing broken cache.
+            return self._build_ocr_model()
+
+    def _recover_broken_model_cache(self, error_message: str) -> bool:
+        """
+        Detect broken Paddle model files (missing inference.json) and remove
+        the model directory so PaddleOCR can re-download it.
+        """
+        if "Cannot open file" not in error_message or "inference.json" not in error_message:
+            return False
+
+        # Works for both Windows and POSIX paths.
+        match = re.search(r"Cannot open file\s+(.+?inference\.json)", error_message)
+        if not match:
+            return False
+
+        broken_file = match.group(1).strip().strip("'\"")
+        broken_dir = Path(os.path.dirname(broken_file))
+        if not broken_dir.exists():
+            return False
+
+        home_dir = Path.home().resolve()
+        try:
+            resolved_dir = broken_dir.resolve()
+        except Exception:
+            return False
+
+        # Safety guard: only delete inside user cache locations.
+        allowed_roots = [
+            home_dir / ".paddlex",
+            home_dir / ".paddleocr",
+        ]
+        if not any(str(resolved_dir).startswith(str(root)) for root in allowed_roots):
+            return False
+
+        shutil.rmtree(resolved_dir, ignore_errors=True)
+        return True
 
     def process_image(self, image_path) -> list:
         """
