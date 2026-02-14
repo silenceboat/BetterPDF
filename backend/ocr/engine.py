@@ -1,12 +1,18 @@
-from paddleocr import PaddleOCR
-
 class Engine:
     def __init__(self, ocr_model=None):
-        self.ocr_model = ocr_model or PaddleOCR(
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=False
-        )
+        self._ocr_model = ocr_model
+
+    @property
+    def ocr_model(self):
+        """Lazy-load PaddleOCR to avoid blocking startup."""
+        if self._ocr_model is None:
+            from paddleocr import PaddleOCR
+            self._ocr_model = PaddleOCR(
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=False
+            )
+        return self._ocr_model
 
     def process_image(self, image_path) -> list:
         """

@@ -41,7 +41,15 @@ class AIService:
         return defaults.get(self.provider, "gpt-4o-mini")
 
     def _init_client(self):
-        """Initialize the API client."""
+        """Initialize the API client lazily on first use."""
+        self._client_initialized = False
+
+    def _ensure_client(self):
+        """Ensure the API client is initialized (lazy)."""
+        if self._client_initialized:
+            return
+        self._client_initialized = True
+
         if self.provider == "openai":
             try:
                 import openai
@@ -51,7 +59,6 @@ class AIService:
             except ImportError:
                 pass
         elif self.provider == "ollama":
-            # Ollama uses simple HTTP requests
             self.client = "ollama"
 
     def chat(self, message: str, context: Optional[str] = None) -> str:
@@ -83,6 +90,7 @@ class AIService:
             messages.append({"role": "user", "content": message})
 
         # Call appropriate provider
+        self._ensure_client()
         if self.provider == "openai" and self.client:
             return self._chat_openai(messages)
         elif self.provider == "ollama":

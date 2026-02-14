@@ -1,15 +1,12 @@
-from PIL import Image
-
-from backend.ocr.engine import Engine
-from backend.ocr.normalize import Normalize
-from backend.ocr.rendering import Renderer
-
-
 class OCRPipeline:
     def __init__(self, pdf_path, output_folder, dpi=150):
         self.pdf_path = pdf_path
         self.output_folder = output_folder
         self.dpi = dpi
+
+        from .engine import Engine
+        from .normalize import Normalize
+        from .rendering import Renderer
 
         self.renderer = Renderer(pdf_path, output_folder)
         self.engine = Engine()
@@ -33,6 +30,7 @@ class OCRPipeline:
         ocr_results = self.engine.process_images(image_paths)
 
         # Step 3: 逐页将像素坐标转换为 PDF 点坐标
+        from PIL import Image
         normalized_results = []
         for image_path, page_lines in zip(image_paths, ocr_results):
             # 从渲染出的图片反推 PDF 页面高度（点）

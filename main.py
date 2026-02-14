@@ -33,30 +33,17 @@ def main():
     print("Starting DeepRead AI...")
     print("=" * 50)
 
-    # Check for required dependencies
+    # Quick dependency check (imports deferred to avoid slow startup)
     try:
-        import fitz  # PyMuPDF
-        print("✓ PyMuPDF (fitz) loaded")
+        import fitz  # PyMuPDF - core dependency, check early
+        print("✓ PyMuPDF available")
     except ImportError:
-        print("⚠ PyMuPDF not installed. PDF functionality will be limited.")
-        print("  Install with: pip install PyMuPDF")
+        print("⚠ PyMuPDF not installed. Install with: pip install PyMuPDF")
 
-    try:
-        from PIL import Image
-        print("✓ Pillow (PIL) loaded")
-    except ImportError:
-        print("⚠ Pillow not installed. PDF rendering will not work.")
-        print("  Install with: pip install Pillow")
-
-    try:
-        import openai
-        if os.getenv("OPENAI_API_KEY"):
-            print("✓ OpenAI API key configured")
-        else:
-            print("ℹ OpenAI API key not set (set OPENAI_API_KEY env var)")
-    except ImportError:
-        print("ℹ OpenAI library not installed (optional)")
-        print("  Install with: pip install openai")
+    if os.getenv("OPENAI_API_KEY"):
+        print("✓ OpenAI API key configured")
+    else:
+        print("ℹ OpenAI API key not set (set OPENAI_API_KEY env var)")
 
     # Create the API instance
     api = DeepReadAPI()

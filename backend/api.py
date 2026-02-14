@@ -11,7 +11,6 @@ from typing import Optional
 
 from .pdf_engine import PDFEngine
 from .ai_service import AIService
-from .ocr.pipeline import OCRPipeline
 
 
 class DeepReadAPI:
@@ -30,7 +29,7 @@ class DeepReadAPI:
         self.current_note_id: Optional[str] = None
 
         # OCR state
-        self._ocr_pipeline: Optional[OCRPipeline] = None
+        self._ocr_pipeline = None
         self._ocr_cache: dict = {}  # page_num -> simplified lines
         self._ocr_temp_dir: Optional[str] = None
 
@@ -187,8 +186,9 @@ class DeepReadAPI:
             if page_num in self._ocr_cache:
                 return {"success": True, "lines": self._ocr_cache[page_num]}
 
-            # Lazy-init the OCR pipeline
+            # Lazy-init the OCR pipeline (import deferred to avoid slow startup)
             if self._ocr_pipeline is None:
+                from .ocr.pipeline import OCRPipeline
                 self._ocr_temp_dir = tempfile.mkdtemp(prefix="deepread_ocr_")
                 self._ocr_pipeline = OCRPipeline(
                     self.current_pdf_path, self._ocr_temp_dir

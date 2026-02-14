@@ -1,4 +1,3 @@
-from pdf2image import convert_from_path
 import os
 
 class Renderer:
@@ -26,6 +25,7 @@ class Renderer:
         if not os.path.exists(self.output_folder):
             os.makedirs(self.output_folder)
 
+        from pdf2image import convert_from_path
         pages = convert_from_path(self.pdf_path, first_page=first_page, last_page=last_page, dpi=dpi)
 
         image_paths = []
