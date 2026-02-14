@@ -7,6 +7,8 @@ import tempfile
 import shutil
 from typing import Optional
 import subprocess
+import threading
+import time
 
 from .pdf_engine import PDFEngine
 from .ai_service import AIService
@@ -32,6 +34,16 @@ class DeepReadAPI:
         self._ocr_pipeline = None
         self._ocr_cache: dict = {}  # page_num -> simplified lines
         self._ocr_temp_dir: Optional[str] = None
+        self._ocr_job_id = 0
+        self._ocr_progress_lock = threading.Lock()
+        self._ocr_progress = {
+            "status": "idle",  # idle | running | completed | error
+            "job_id": 0,
+            "processed_pages": 0,
+            "total_pages": 0,
+            "total_lines": 0,
+            "error": "",
+        }
 
     # ==================== PDF Operations ====================
 
@@ -160,11 +172,21 @@ class DeepReadAPI:
 
     def _cleanup_ocr(self):
         """Clean up OCR pipeline, cache, and temp directory."""
+        self._ocr_job_id += 1
         self._ocr_pipeline = None
         self._ocr_cache = {}
         if self._ocr_temp_dir and os.path.exists(self._ocr_temp_dir):
             shutil.rmtree(self._ocr_temp_dir, ignore_errors=True)
             self._ocr_temp_dir = None
+        with self._ocr_progress_lock:
+            self._ocr_progress = {
+                "status": "idle",
+                "job_id": self._ocr_job_id,
+                "processed_pages": 0,
+                "total_pages": 0,
+                "total_lines": 0,
+                "error": "",
+            }
 
     def _ensure_ocr_pipeline(self):
         """Lazy-init OCR pipeline."""
@@ -195,6 +217,85 @@ class DeepReadAPI:
                 "height": y_max - y_min,
             })
         return simplified
+
+    def _update_ocr_progress(self, **kwargs):
+        with self._ocr_progress_lock:
+            self._ocr_progress.update(kwargs)
+
+    def _get_ocr_progress_snapshot(self) -> dict:
+        with self._ocr_progress_lock:
+            progress = dict(self._ocr_progress)
+        total_pages = int(progress.get("total_pages") or 0)
+        processed_pages = int(progress.get("processed_pages") or 0)
+        progress["percent"] = (
+            100.0 * processed_pages / total_pages if total_pages > 0 else 0.0
+        )
+        return progress
+
+    def _run_ocr_document_job(self, job_id: int, total_pages: int):
+        """
+        Background worker for full-document OCR with progress updates.
+        """
+        try:
+            self._ensure_ocr_pipeline()
+            total_lines = 0
+
+            # Count existing cached lines as progress baseline.
+            processed_pages = 0
+            for page_num in range(1, total_pages + 1):
+                if page_num in self._ocr_cache:
+                    processed_pages += 1
+                    total_lines += len(self._ocr_cache[page_num])
+
+            self._update_ocr_progress(
+                status="running",
+                job_id=job_id,
+                processed_pages=processed_pages,
+                total_pages=total_pages,
+                total_lines=total_lines,
+                error="",
+            )
+
+            for page_num in range(1, total_pages + 1):
+                # If a new PDF is opened, cancel this stale job.
+                if job_id != self._ocr_job_id:
+                    return
+
+                if page_num in self._ocr_cache:
+                    continue
+
+                results = self._ocr_pipeline.run(first_page=page_num, last_page=page_num)
+                page_lines = results[0] if results else []
+                simplified = self._simplify_ocr_lines(page_lines)
+                self._ocr_cache[page_num] = simplified
+
+                processed_pages += 1
+                total_lines += len(simplified)
+                self._update_ocr_progress(
+                    status="running",
+                    job_id=job_id,
+                    processed_pages=processed_pages,
+                    total_pages=total_pages,
+                    total_lines=total_lines,
+                    error="",
+                )
+
+            if job_id == self._ocr_job_id:
+                self._update_ocr_progress(
+                    status="completed",
+                    job_id=job_id,
+                    processed_pages=total_pages,
+                    total_pages=total_pages,
+                    total_lines=total_lines,
+                    error="",
+                )
+        except Exception as e:
+            if job_id == self._ocr_job_id:
+                self._update_ocr_progress(
+                    status="error",
+                    job_id=job_id,
+                    error=str(e),
+                )
 
     def ocr_page(self, page_num: int) -> dict:
         """
@@ -249,34 +350,102 @@ class DeepReadAPI:
         if page_count <= 0:
             return {"success": True, "page_count": 0, "total_lines": 0}
 
-        try:
-            # Fast path: already cached all pages
-            if len(self._ocr_cache) >= page_count:
-                total_lines = sum(len(lines) for lines in self._ocr_cache.values())
+        start = self.start_ocr_document()
+        if not start.get("success"):
+            return start
+
+        # Keep compatibility for callers expecting synchronous behavior.
+        # Poll until current job finishes.
+        while True:
+            progress = self.get_ocr_progress()
+            status = progress.get("status")
+            if status == "completed":
                 return {
                     "success": True,
-                    "page_count": page_count,
-                    "total_lines": total_lines,
-                    "cached": True,
+                    "page_count": progress.get("total_pages", page_count),
+                    "total_lines": progress.get("total_lines", 0),
+                    "cached": start.get("cached", False),
                 }
+            if status == "error":
+                return {"success": False, "error": progress.get("error", "OCR failed")}
+            time.sleep(0.1)
 
-            self._ensure_ocr_pipeline()
-            results = self._ocr_pipeline.run(first_page=1, last_page=page_count)
+    def start_ocr_document(self) -> dict:
+        """
+        Start full-document OCR in background and return immediately.
+        """
+        if not self.pdf_engine:
+            return {"success": False, "error": "No PDF open"}
 
-            total_lines = 0
-            for idx, page_lines in enumerate(results, start=1):
-                simplified = self._simplify_ocr_lines(page_lines)
-                self._ocr_cache[idx] = simplified
-                total_lines += len(simplified)
+        page_count = self.pdf_engine.page_count
+        if page_count <= 0:
+            self._update_ocr_progress(
+                status="completed",
+                processed_pages=0,
+                total_pages=0,
+                total_lines=0,
+                error="",
+            )
+            return {"success": True, "started": False, "cached": True, "total_pages": 0}
 
+        # If OCR already running for current job, return status.
+        progress = self._get_ocr_progress_snapshot()
+        if progress.get("status") == "running":
             return {
                 "success": True,
-                "page_count": page_count,
-                "total_lines": total_lines,
-                "cached": False,
+                "started": False,
+                "already_running": True,
+                "total_pages": progress.get("total_pages", page_count),
             }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+
+        # If fully cached, mark completed and skip worker thread.
+        if len(self._ocr_cache) >= page_count:
+            total_lines = sum(len(lines) for lines in self._ocr_cache.values())
+            self._update_ocr_progress(
+                status="completed",
+                processed_pages=page_count,
+                total_pages=page_count,
+                total_lines=total_lines,
+                error="",
+            )
+            return {
+                "success": True,
+                "started": False,
+                "cached": True,
+                "total_pages": page_count,
+                "total_lines": total_lines,
+            }
+
+        job_id = self._ocr_job_id
+        self._update_ocr_progress(
+            status="running",
+            job_id=job_id,
+            processed_pages=0,
+            total_pages=page_count,
+            total_lines=0,
+            error="",
+        )
+
+        thread = threading.Thread(
+            target=self._run_ocr_document_job,
+            args=(job_id, page_count),
+            daemon=True,
+        )
+        thread.start()
+        return {
+            "success": True,
+            "started": True,
+            "cached": False,
+            "total_pages": page_count,
+        }
+
+    def get_ocr_progress(self) -> dict:
+        """
+        Get current background OCR progress.
+        """
+        progress = self._get_ocr_progress_snapshot()
+        progress["success"] = True
+        return progress
 
     # ==================== AI Operations ====================
 

@@ -30,6 +30,7 @@ class PDFViewer {
         this.ocrMode = 'page'; // 'page' or 'document'
         this.ocrResults = {};  // page_num -> lines array
         this.ocrLoading = false;
+        this.ocrProgressTimer = null;
         this.autoFit = true;
         this._layoutResizeRaf = null;
         this._onDocumentClick = (e) => {
@@ -164,8 +165,23 @@ class PDFViewer {
                         </svg>
                     </button>
                     <div class="ocr-mode-menu" id="ocr-mode-menu" hidden>
-                        <button class="ocr-mode-item" id="ocr-mode-page">OCR This Page</button>
-                        <button class="ocr-mode-item" id="ocr-mode-document">OCR Whole PDF</button>
+                        <button class="ocr-mode-item" id="ocr-mode-page">
+                            <span class="ocr-mode-title">OCR This Page</span>
+                            <span class="ocr-mode-desc">Fast recognition for current page only.</span>
+                        </button>
+                        <button class="ocr-mode-item" id="ocr-mode-document">
+                            <span class="ocr-mode-title">OCR Entire PDF</span>
+                            <span class="ocr-mode-desc">Background scan for all pages with progress.</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="ocr-progress" id="ocr-progress" hidden>
+                    <div class="ocr-progress-row">
+                        <span class="ocr-progress-label" id="ocr-progress-label">OCR</span>
+                        <span class="ocr-progress-meta" id="ocr-progress-meta">0%</span>
+                    </div>
+                    <div class="ocr-progress-track">
+                        <div class="ocr-progress-fill" id="ocr-progress-fill"></div>
                     </div>
                 </div>
             </div>
@@ -640,6 +656,45 @@ class PDFViewer {
         menu.hidden = true;
     }
 
+    showOcrProgress(label, meta = '', indeterminate = false) {
+        const progress = document.getElementById('ocr-progress');
+        const labelEl = document.getElementById('ocr-progress-label');
+        const metaEl = document.getElementById('ocr-progress-meta');
+        const fillEl = document.getElementById('ocr-progress-fill');
+        if (!progress || !labelEl || !metaEl || !fillEl) return;
+
+        labelEl.textContent = label;
+        metaEl.textContent = meta;
+        progress.hidden = false;
+        progress.classList.toggle('indeterminate', indeterminate);
+
+        if (indeterminate) {
+            fillEl.style.width = '38%';
+        }
+    }
+
+    updateOcrProgress(processedPages, totalPages, totalLines = 0) {
+        const progress = document.getElementById('ocr-progress');
+        const metaEl = document.getElementById('ocr-progress-meta');
+        const fillEl = document.getElementById('ocr-progress-fill');
+        if (!progress || !metaEl || !fillEl) return;
+
+        const total = Math.max(0, totalPages || 0);
+        const processed = Math.max(0, Math.min(processedPages || 0, total || 0));
+        const percent = total > 0 ? Math.round((processed / total) * 100) : 0;
+
+        progress.classList.remove('indeterminate');
+        fillEl.style.width = `${percent}%`;
+        metaEl.textContent = `${processed}/${total} · ${percent}% · ${totalLines} lines`;
+    }
+
+    hideOcrProgress() {
+        const progress = document.getElementById('ocr-progress');
+        if (!progress) return;
+        progress.hidden = true;
+        progress.classList.remove('indeterminate');
+    }
+
     enableOcr(mode = 'page') {
         this.ocrEnabled = true;
         this.ocrMode = mode;
@@ -663,6 +718,10 @@ class PDFViewer {
 
     disableOcr() {
         this.ocrEnabled = false;
+        if (this.ocrProgressTimer) {
+            clearInterval(this.ocrProgressTimer);
+            this.ocrProgressTimer = null;
+        }
         const btn = document.getElementById('ocr-toggle');
         if (btn) {
             btn.classList.remove('active');
@@ -672,6 +731,7 @@ class PDFViewer {
             layer.classList.remove('ocr-active');
         }
         this.clearOcrOverlay();
+        this.hideOcrProgress();
     }
 
     async loadOcrForCurrentPage() {
@@ -686,12 +746,15 @@ class PDFViewer {
         if (this.ocrLoading) return;
         this.ocrLoading = true;
 
+        this.showOcrProgress('OCR This Page', 'Processing...', true);
         window.app?.showToast('Running OCR for current page...', 'info');
 
         try {
             const result = await API.ocrPage(this.currentPage);
             if (result.success) {
                 this.ocrResults[this.currentPage] = result.lines;
+                this.showOcrProgress('OCR This Page', `${result.lines.length} lines found`, false);
+                this.updateOcrProgress(1, 1, result.lines.length);
                 window.app?.showToast(`OCR complete: ${result.lines.length} lines found`, 'success');
                 // Only render if still on the same page and OCR still enabled
                 if (this.ocrEnabled) {
@@ -699,12 +762,15 @@ class PDFViewer {
                 }
             } else {
                 window.app?.showToast(`OCR failed: ${result.error}`, 'error');
+                this.hideOcrProgress();
             }
         } catch (error) {
             console.error('OCR failed:', error);
             window.app?.showToast('OCR failed', 'error');
+            this.hideOcrProgress();
         } finally {
             this.ocrLoading = false;
+            setTimeout(() => this.hideOcrProgress(), 1200);
         }
     }
 
@@ -712,35 +778,63 @@ class PDFViewer {
         if (!this.pageCount || this.ocrLoading) return;
 
         this.ocrLoading = true;
+        this.showOcrProgress('OCR Entire PDF', `0/${this.pageCount} · 0%`, false);
         window.app?.showToast(`Running OCR for all ${this.pageCount} pages...`, 'info', 4500);
 
         try {
-            const result = await API.ocrDocument();
-            if (!result.success) {
-                window.app?.showToast(`OCR failed: ${result.error}`, 'error', 6000);
+            const startResult = await API.startOcrDocument();
+            if (!startResult.success) {
+                window.app?.showToast(`OCR failed: ${startResult.error}`, 'error', 6000);
                 this.disableOcr();
                 return;
             }
 
-            // Render current page from cache populated by backend full-document OCR.
-            const currentResult = await API.ocrPage(this.currentPage);
-            if (currentResult.success) {
-                this.ocrResults[this.currentPage] = currentResult.lines;
-                if (this.ocrEnabled) {
-                    this.renderOcrOverlay(currentResult.lines);
+            const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+            while (this.ocrEnabled) {
+                const progress = await API.getOcrProgress();
+                if (!progress.success) {
+                    window.app?.showToast(`OCR failed: ${progress.error || 'Unknown error'}`, 'error', 6000);
+                    this.disableOcr();
+                    return;
                 }
+
+                this.updateOcrProgress(
+                    progress.processed_pages || 0,
+                    progress.total_pages || this.pageCount,
+                    progress.total_lines || 0
+                );
+
+                if (progress.status === 'completed') {
+                    const currentResult = await API.ocrPage(this.currentPage);
+                    if (currentResult.success) {
+                        this.ocrResults[this.currentPage] = currentResult.lines;
+                        if (this.ocrEnabled) {
+                            this.renderOcrOverlay(currentResult.lines);
+                        }
+                    }
+                    window.app?.showToast(
+                        `OCR complete: ${progress.total_pages || this.pageCount} pages, ${progress.total_lines || 0} lines`,
+                        'success',
+                        4500
+                    );
+                    break;
+                }
+
+                if (progress.status === 'error') {
+                    window.app?.showToast(`OCR failed: ${progress.error || 'Unknown error'}`, 'error', 7000);
+                    this.disableOcr();
+                    return;
+                }
+
+                await sleep(350);
             }
-            window.app?.showToast(
-                `OCR complete: ${result.page_count || this.pageCount} pages, ${result.total_lines || 0} lines`,
-                'success',
-                4500
-            );
         } catch (error) {
             console.error('OCR failed:', error);
             window.app?.showToast('OCR failed', 'error');
             this.disableOcr();
         } finally {
             this.ocrLoading = false;
+            setTimeout(() => this.hideOcrProgress(), 1500);
         }
     }
 

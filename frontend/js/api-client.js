@@ -76,6 +76,21 @@ const API = {
                 total_lines: 280,
                 cached: false,
             }),
+            start_ocr_document: () => ({
+                success: true,
+                started: true,
+                cached: false,
+                total_pages: 10,
+            }),
+            get_ocr_progress: () => ({
+                success: true,
+                status: 'completed',
+                processed_pages: 10,
+                total_pages: 10,
+                total_lines: 280,
+                percent: 100,
+                error: '',
+            }),
             get_app_info: () => ({
                 name: 'DeepRead AI',
                 version: '0.2.0 (Mock)'
@@ -149,6 +164,20 @@ const API = {
      */
     async ocrDocument() {
         return this.call('ocr_document');
+    },
+
+    /**
+     * Start OCR for whole document in background
+     */
+    async startOcrDocument() {
+        return this.call('start_ocr_document');
+    },
+
+    /**
+     * Get OCR background task progress
+     */
+    async getOcrProgress() {
+        return this.call('get_ocr_progress');
     },
 
     /**
