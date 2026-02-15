@@ -62,9 +62,20 @@ jobs:
           if (!(Test-Path $iscc)) {
             throw "ISCC not found: $iscc"
           }
+          $setupName = "BetterPDF-${{ steps.meta.outputs.version }}-win-x64-setup"
           $distDir = (Resolve-Path "dist\\BetterPDF").Path
           $webView2Setup = (Resolve-Path "build_assets\\webview2\\MicrosoftEdgeWebView2Setup.exe").Path
-          & $iscc "/DMyAppVersion=${{ steps.meta.outputs.version }}" "/DDistDir=$distDir" "/DWebView2Setup=$webView2Setup" "installer\\BetterPDF.iss"
+          $outputDir = (Join-Path $pwd.Path "dist")
+          & $iscc "/DMyAppVersion=${{ steps.meta.outputs.version }}" "/DDistDir=$distDir" "/DWebView2Setup=$webView2Setup" "/O$outputDir" "/F$setupName" "installer\\BetterPDF.iss"
+
+          $expectedSetup = "dist/$setupName.exe"
+          if (!(Test-Path $expectedSetup)) {
+            $candidate = Get-ChildItem -Path . -Recurse -File -Filter "$setupName.exe" | Select-Object -First 1
+            if ($null -eq $candidate) {
+              throw "Installer output not found: $setupName.exe"
+            }
+            Copy-Item -Path $candidate.FullName -Destination $expectedSetup -Force
+          }
 
       - name: Build portable archive
         shell: pwsh
