@@ -22,6 +22,7 @@ class DeepReadApp {
         this.recentMenuHideHandler = null;
         this.recentMenuToggleBtn = null;
         this.recentMenuEl = null;
+        this.recentFilesRequestSeq = 0;
 
         this.init();
     }
@@ -295,13 +296,23 @@ class DeepReadApp {
     }
 
     async refreshRecentFiles() {
+        const requestSeq = ++this.recentFilesRequestSeq;
         try {
             const result = await API.getRecentFiles(20);
+            // Keep UI deterministic when multiple refreshes overlap.
+            if (requestSeq !== this.recentFilesRequestSeq) {
+                return;
+            }
             if (result.success) {
                 this.recentFiles = Array.isArray(result.files) ? result.files : [];
                 this.renderRecentFilesMenu();
+            } else {
+                console.error('Failed to load recent files:', result.error || 'Unknown error');
             }
         } catch (error) {
+            if (requestSeq !== this.recentFilesRequestSeq) {
+                return;
+            }
             console.error('Failed to load recent files:', error);
         }
     }
