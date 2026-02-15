@@ -62,7 +62,9 @@ jobs:
           if (!(Test-Path $iscc)) {
             throw "ISCC not found: $iscc"
           }
-          & $iscc /DMyAppVersion=${{ steps.meta.outputs.version }} /DDistDir=dist\\BetterPDF /DWebView2Setup=build_assets\\webview2\\MicrosoftEdgeWebView2Setup.exe installer\\BetterPDF.iss
+          $distDir = (Resolve-Path "dist\\BetterPDF").Path
+          $webView2Setup = (Resolve-Path "build_assets\\webview2\\MicrosoftEdgeWebView2Setup.exe").Path
+          & $iscc "/DMyAppVersion=${{ steps.meta.outputs.version }}" "/DDistDir=$distDir" "/DWebView2Setup=$webView2Setup" "installer\\BetterPDF.iss"
 
       - name: Build portable archive
         shell: pwsh
