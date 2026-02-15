@@ -14,6 +14,14 @@ class DeepReadApp {
         this.isResizingPanels = false;
         this.leftPanelStorageKey = 'deepread_left_panel_width';
         this.pageNotes = new Map(); // page number -> note cards
+        this.currentFilePath = '';
+        this.recentFiles = [];
+        this.sessionStateSaveTimer = null;
+        this.notesSaveTimer = null;
+        this.recentMenuOpen = false;
+        this.recentMenuHideHandler = null;
+        this.recentMenuToggleBtn = null;
+        this.recentMenuEl = null;
 
         this.init();
     }
@@ -38,6 +46,7 @@ class DeepReadApp {
         this.aiPanel = new AIChatPanel('panel-content');
         this.notesPanel = new NotesPanel('panel-content');
         this.setupPageSync();
+        this.setupStatePersistenceSync();
         this.setupResizableLayout();
 
         // Show initial panel
@@ -48,6 +57,7 @@ class DeepReadApp {
 
         // Load app info
         this.loadAppInfo();
+        this.refreshRecentFiles();
 
         console.log('DeepRead AI initialized');
     }
@@ -76,9 +86,12 @@ class DeepReadApp {
     }
 
     setupHeader() {
-        // Open PDF button
-        document.getElementById('open-pdf-btn')?.addEventListener('click', () => {
-            this.openPdf();
+        document.getElementById('open-pdf-btn')?.addEventListener('click', () => this.openPdf());
+        this.recentMenuToggleBtn = document.getElementById('open-pdf-menu-btn');
+        this.recentMenuEl = document.getElementById('recent-files-menu');
+        this.recentMenuToggleBtn?.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this.toggleRecentFilesMenu();
         });
 
         // Save button
@@ -102,6 +115,15 @@ class DeepReadApp {
         window.addEventListener('deepread:page-changed', (event) => {
             const page = Number(event?.detail?.page);
             this.onPageChanged(page);
+        });
+    }
+
+    setupStatePersistenceSync() {
+        window.addEventListener('deepread:view-state-changed', () => {
+            this.scheduleSaveSessionState();
+        });
+        window.addEventListener('deepread:page-changed', () => {
+            this.scheduleSaveSessionState();
         });
     }
 
@@ -233,22 +255,279 @@ class DeepReadApp {
 
     // ==================== File Operations ====================
 
-    async openPdf() {
+    async openPdf(filePath = '') {
         try {
-            const result = await API.selectPdfFile();
-
-            if (result.success && result.file_path) {
-                await this.pdfViewer.loadDocument(result.file_path);
-                this.showToast('PDF opened successfully', 'success');
-            } else if (result.cancelled) {
-                // User cancelled, do nothing
-            } else {
-                this.showToast(result.error || 'Failed to open PDF', 'error');
+            if (this.currentFilePath) {
+                await this.flushPendingPersistence();
             }
+
+            let targetPath = filePath;
+            if (!targetPath) {
+                const result = await API.selectPdfFile();
+                if (result.cancelled) {
+                    return;
+                }
+                if (!result.success || !result.file_path) {
+                    this.showToast(result.error || 'Failed to open PDF', 'error');
+                    return;
+                }
+                targetPath = result.file_path;
+            }
+
+            const openResult = await this.pdfViewer.loadDocument(targetPath);
+            this.currentFilePath = openResult?.file_path || targetPath;
+            this.hydratePageNotes(openResult?.page_notes || []);
+            this.notesPanel?.setActivePage(this.pdfViewer?.getCurrentPage() || 1, {
+                render: false,
+                preserveActive: false
+            });
+            if (this.currentPanel === 'notes') {
+                this.notesPanel?.render(document.getElementById('panel-content'));
+            }
+
+            await this.refreshRecentFiles();
+            this.hideRecentFilesMenu();
+            this.showToast('PDF opened successfully', 'success');
         } catch (error) {
             console.error('Failed to open PDF:', error);
             this.showToast('Failed to open PDF', 'error');
         }
+    }
+
+    async refreshRecentFiles() {
+        try {
+            const result = await API.getRecentFiles(20);
+            if (result.success) {
+                this.recentFiles = Array.isArray(result.files) ? result.files : [];
+                this.renderRecentFilesMenu();
+            }
+        } catch (error) {
+            console.error('Failed to load recent files:', error);
+        }
+    }
+
+    toggleRecentFilesMenu() {
+        if (this.recentMenuOpen) {
+            this.hideRecentFilesMenu();
+            return;
+        }
+        this.showRecentFilesMenu();
+    }
+
+    showRecentFilesMenu() {
+        if (!this.recentMenuEl) return;
+        this.renderRecentFilesMenu();
+        this.recentMenuEl.hidden = false;
+        this.recentMenuOpen = true;
+        if (this.recentMenuToggleBtn) {
+            this.recentMenuToggleBtn.setAttribute('aria-expanded', 'true');
+        }
+        document.querySelector('.open-pdf-group')?.classList.add('menu-open');
+        this.recentMenuHideHandler = (event) => {
+            if (!event.target.closest('.open-pdf-group')) {
+                this.hideRecentFilesMenu();
+            }
+        };
+        setTimeout(() => {
+            document.addEventListener('click', this.recentMenuHideHandler);
+        }, 0);
+    }
+
+    hideRecentFilesMenu() {
+        if (!this.recentMenuEl) return;
+        this.recentMenuEl.hidden = true;
+        this.recentMenuOpen = false;
+        if (this.recentMenuToggleBtn) {
+            this.recentMenuToggleBtn.setAttribute('aria-expanded', 'false');
+        }
+        document.querySelector('.open-pdf-group')?.classList.remove('menu-open');
+        if (this.recentMenuHideHandler) {
+            document.removeEventListener('click', this.recentMenuHideHandler);
+            this.recentMenuHideHandler = null;
+        }
+    }
+
+    renderRecentFilesMenu() {
+        if (!this.recentMenuEl) return;
+
+        if (!this.recentFiles.length) {
+            this.recentMenuEl.innerHTML = '<button class="recent-files-item empty" disabled>No recent files yet</button>';
+            return;
+        }
+
+        this.recentMenuEl.innerHTML = this.recentFiles.map((item) => {
+            const filePath = this.escapeHtml(item.file_path || '');
+            const fileName = this.escapeHtml(item.file_name || 'Unknown file');
+            const meta = this.escapeHtml(
+                `${item.last_page ? `Page ${item.last_page}` : 'Page 1'} · ${this.formatRecentTime(item.last_opened_at)} · ${item.file_path || ''}`
+            );
+            return `
+                <button class="recent-files-item" data-file-path="${filePath}" title="${filePath}">
+                    <span class="recent-files-name">${fileName}</span>
+                    <span class="recent-files-meta">${meta}</span>
+                </button>
+            `;
+        }).join('');
+
+        this.recentMenuEl.querySelectorAll('.recent-files-item[data-file-path]').forEach((itemEl) => {
+            itemEl.addEventListener('click', async (event) => {
+                event.preventDefault();
+                const path = itemEl.dataset.filePath;
+                this.hideRecentFilesMenu();
+                await this.openPdf(path);
+            });
+        });
+    }
+
+    formatRecentTime(timestamp) {
+        const date = new Date(timestamp || '');
+        if (Number.isNaN(date.getTime())) return 'Unknown time';
+        const now = new Date();
+        const sameDay = date.toDateString() === now.toDateString();
+        if (sameDay) {
+            return `Today ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        }
+        return date.toLocaleString([], {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
+    hydratePageNotes(notes) {
+        this.pageNotes = new Map();
+        for (const raw of (Array.isArray(notes) ? notes : [])) {
+            const page = Number(raw?.page);
+            const id = String(raw?.id || '').trim();
+            const rectPdf = this.normalizeRect(raw?.rectPdf);
+            if (!Number.isFinite(page) || page < 1 || !id || !rectPdf) {
+                continue;
+            }
+            const note = {
+                id,
+                page,
+                quote: String(raw?.quote || ''),
+                note: String(raw?.note || ''),
+                rectPdf,
+                createdAt: raw?.createdAt || new Date().toISOString(),
+                updatedAt: raw?.updatedAt || raw?.createdAt || new Date().toISOString()
+            };
+            const existing = this.pageNotes.get(page) || [];
+            existing.push(note);
+            this.pageNotes.set(page, existing);
+        }
+
+        this.pageNotes.forEach((notesForPage, page) => {
+            const sorted = [...notesForPage].sort((a, b) => {
+                return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+            });
+            this.pageNotes.set(page, sorted);
+        });
+    }
+
+    serializePageNotes() {
+        const flattened = [];
+        this.pageNotes.forEach((notesForPage, page) => {
+            notesForPage.forEach((note) => {
+                flattened.push({
+                    id: note.id,
+                    page,
+                    quote: note.quote || '',
+                    note: note.note || '',
+                    rectPdf: this.normalizeRect(note.rectPdf) || note.rectPdf || {},
+                    createdAt: note.createdAt || new Date().toISOString(),
+                    updatedAt: note.updatedAt || note.createdAt || new Date().toISOString()
+                });
+            });
+        });
+        return flattened;
+    }
+
+    schedulePersistPageNotes() {
+        if (!this.currentFilePath) return;
+        const pathSnapshot = this.currentFilePath;
+        const notesSnapshot = this.serializePageNotes();
+        if (this.notesSaveTimer) {
+            clearTimeout(this.notesSaveTimer);
+        }
+        this.notesSaveTimer = setTimeout(() => {
+            this.notesSaveTimer = null;
+            this.persistPageNotesForPath(pathSnapshot, notesSnapshot);
+        }, 450);
+    }
+
+    async persistPageNotes(options = {}) {
+        const { silent = true } = options;
+        if (!this.currentFilePath) return { success: false, error: 'No active file path' };
+        return this.persistPageNotesForPath(this.currentFilePath, this.serializePageNotes(), { silent });
+    }
+
+    async persistPageNotesForPath(filePath, notes, options = {}) {
+        const { silent = true } = options;
+        if (!filePath) return { success: false, error: 'No active file path' };
+        try {
+            const result = await API.savePageNotes(filePath, notes);
+            if (!result.success && !silent) {
+                this.showToast(result.error || 'Failed to save notes', 'error');
+            }
+            return result;
+        } catch (error) {
+            if (!silent) {
+                this.showToast('Failed to save notes', 'error');
+            }
+            return { success: false, error: error.message };
+        }
+    }
+
+    async persistNoteDeletion(noteId) {
+        if (!this.currentFilePath || !noteId) return;
+        try {
+            await API.deletePageNote(this.currentFilePath, noteId);
+        } catch (error) {
+            console.error('Failed to delete note in storage:', error);
+        }
+    }
+
+    scheduleSaveSessionState() {
+        if (!this.currentFilePath) return;
+        const pathSnapshot = this.currentFilePath;
+        const stateSnapshot = this.pdfViewer?.getViewState();
+        if (this.sessionStateSaveTimer) {
+            clearTimeout(this.sessionStateSaveTimer);
+        }
+        this.sessionStateSaveTimer = setTimeout(() => {
+            this.sessionStateSaveTimer = null;
+            this.saveSessionState(pathSnapshot, stateSnapshot);
+        }, 350);
+    }
+
+    async saveSessionState(filePath = this.currentFilePath, state = null) {
+        if (!filePath || !this.pdfViewer) return;
+        try {
+            const payload = state || this.pdfViewer.getViewState();
+            await API.saveSessionState(filePath, payload);
+        } catch (error) {
+            console.error('Failed to save session state:', error);
+        }
+    }
+
+    async flushPendingPersistence() {
+        const pathSnapshot = this.currentFilePath;
+        if (!pathSnapshot) return;
+
+        if (this.notesSaveTimer) {
+            clearTimeout(this.notesSaveTimer);
+            this.notesSaveTimer = null;
+        }
+        if (this.sessionStateSaveTimer) {
+            clearTimeout(this.sessionStateSaveTimer);
+            this.sessionStateSaveTimer = null;
+        }
+
+        const notesSnapshot = this.serializePageNotes();
+        await this.persistPageNotesForPath(pathSnapshot, notesSnapshot, { silent: true });
+        await this.saveSessionState(pathSnapshot, this.pdfViewer?.getViewState());
     }
 
     async saveCurrentNote() {
@@ -304,6 +583,7 @@ class DeepReadApp {
         this.notesPanel.setActivePage(page, { render: false, preserveActive: false });
         this.switchPanel('notes');
         this.notesPanel.setActiveNote(note.id, { focusPdf: true });
+        this.schedulePersistPageNotes();
         this.showToast(`Added note to page ${page}`, 'success', 1800);
     }
 
@@ -330,6 +610,15 @@ class DeepReadApp {
             total += notes.length;
         });
         return total;
+    }
+
+    escapeHtml(text) {
+        return String(text || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     // ==================== Toast Notifications ====================
@@ -755,6 +1044,7 @@ class NotesPanel {
         const updatedAt = new Date().toISOString();
         note.note = text;
         note.updatedAt = updatedAt;
+        window.app?.schedulePersistPageNotes();
         return updatedAt;
     }
 
@@ -774,6 +1064,8 @@ class NotesPanel {
             this.activeNoteId = nextNotes[0]?.id || '';
         }
 
+        app.persistNoteDeletion(noteId);
+        app.schedulePersistPageNotes();
         app.pdfViewer?.clearNoteFocus();
         if (app.currentPanel === 'notes') {
             this.render(document.getElementById('panel-content'));
@@ -786,7 +1078,10 @@ class NotesPanel {
             window.app?.showToast('No page notes yet. Use "Take a Note" first.', 'warning');
             return;
         }
-        window.app?.showToast(`Session notes ready: ${total} total notes across pages.`, 'info');
+        const result = await window.app?.persistPageNotes({ silent: false });
+        if (result?.success) {
+            window.app?.showToast(`Saved ${total} notes locally.`, 'success');
+        }
     }
 
     formatTime(timestamp) {

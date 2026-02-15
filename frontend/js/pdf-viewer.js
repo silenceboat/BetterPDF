@@ -96,21 +96,42 @@ class PDFViewer {
 
         if (result.success) {
             this.pageCount = result.page_count;
-            this.currentPage = 1;
-            this.zoom = 1.0;
+            const session = result.session_state || {};
+            const savedPage = Number(session.last_page);
+            const savedZoom = Number(session.last_zoom);
+            const hasSavedPage = Number.isFinite(savedPage) && savedPage >= 1;
+            const hasSavedZoom = Number.isFinite(savedZoom) && savedZoom > 0;
+
+            this.currentPage = hasSavedPage
+                ? Math.min(this.pageCount, Math.max(1, Math.floor(savedPage)))
+                : 1;
+            this.zoom = hasSavedZoom
+                ? Math.max(this.minZoom, Math.min(this.maxZoom, savedZoom))
+                : 1.0;
             this.ocrResults = {};
             this.ocrEnabled = false;
+            this.ocrMode = session.ocr_mode === 'document' ? 'document' : 'page';
             this.ocrPageLoadingPage = null;
             this.ocrDocumentFullyProcessed = false;
-            this.autoFit = true;
+            this.autoFit = !hasSavedZoom;
             this.clearNoteFocus();
 
             this.renderViewer();
             await this.renderPage();
-            this.fitWidth();
+            if (this.autoFit) {
+                this.fitWidth();
+            } else {
+                this.updateZoomDisplay();
+            }
             this.updatePageInfo();
             this.updateOcrPageStatus();
             this.emitPageChanged();
+            this.emitViewStateChanged('document-load');
+
+            if (session.ocr_enabled) {
+                this.enableOcr(this.ocrMode, { emitState: false });
+                this.emitViewStateChanged('ocr-restore');
+            }
 
             return result;
         } else {
@@ -381,6 +402,7 @@ class PDFViewer {
         this.clearSelection();
         this.updateOcrPageStatus();
         this.emitPageChanged();
+        this.emitViewStateChanged('page');
     }
 
     emitPageChanged() {
@@ -422,6 +444,7 @@ class PDFViewer {
         }
         this.renderPage();
         this.updateZoomDisplay();
+        this.emitViewStateChanged('zoom');
     }
 
     fitWidth() {
@@ -757,6 +780,24 @@ class PDFViewer {
         return this.selectedText;
     }
 
+    getViewState() {
+        return {
+            last_page: this.currentPage,
+            last_zoom: this.zoom,
+            ocr_enabled: this.ocrEnabled,
+            ocr_mode: this.ocrMode
+        };
+    }
+
+    emitViewStateChanged(source = 'unknown') {
+        window.dispatchEvent(new CustomEvent('deepread:view-state-changed', {
+            detail: {
+                source,
+                state: this.getViewState()
+            }
+        }));
+    }
+
     normalizeRect(rect) {
         if (!rect) return null;
         const x1 = Number(rect.x1);
@@ -903,7 +944,8 @@ class PDFViewer {
         progress.classList.remove('indeterminate');
     }
 
-    enableOcr(mode = 'page') {
+    enableOcr(mode = 'page', options = {}) {
+        const { emitState = true } = options;
         this.ocrEnabled = true;
         this.ocrMode = mode;
 
@@ -924,9 +966,13 @@ class PDFViewer {
         } else {
             this.loadOcrForCurrentPage();
         }
+        if (emitState) {
+            this.emitViewStateChanged('ocr-enable');
+        }
     }
 
-    disableOcr() {
+    disableOcr(options = {}) {
+        const { emitState = true } = options;
         this.ocrEnabled = false;
         if (this.ocrProgressTimer) {
             clearInterval(this.ocrProgressTimer);
@@ -943,6 +989,9 @@ class PDFViewer {
         this.clearOcrOverlay();
         this.hideOcrProgress();
         this.updateOcrPageStatus();
+        if (emitState) {
+            this.emitViewStateChanged('ocr-disable');
+        }
     }
 
     async loadOcrForCurrentPage() {

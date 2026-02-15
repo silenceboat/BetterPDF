@@ -1,0 +1,196 @@
+"""Tests for local persistence integration in DeepReadAPI."""
+
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+import backend.api as api_module
+from backend.persistence import PersistenceStore
+
+
+class FakePDFEngine:
+    """Minimal stub for API-level persistence tests."""
+
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+        self.page_count = 12
+
+    def close(self):
+        return None
+
+    def get_metadata(self) -> dict:
+        return {
+            "file_name": Path(self.file_path).name,
+            "page_count": self.page_count,
+            "title": "",
+            "author": "",
+            "subject": "",
+        }
+
+
+def _make_api(monkeypatch, db_path: Path):
+    monkeypatch.setenv("DEEPREAD_DB_PATH", str(db_path))
+    monkeypatch.setattr(api_module, "PDFEngine", FakePDFEngine)
+    return api_module.DeepReadAPI()
+
+
+def _touch(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"%PDF-1.7\n%stub\n")
+
+
+def test_recent_files_sorted_and_saved(monkeypatch, tmp_path):
+    db_path = tmp_path / "deepread.db"
+    api = _make_api(monkeypatch, db_path)
+
+    file_a = tmp_path / "a.pdf"
+    file_b = tmp_path / "b.pdf"
+    _touch(file_a)
+    _touch(file_b)
+
+    assert api.open_pdf(str(file_a))["success"]
+    assert api.open_pdf(str(file_b))["success"]
+
+    recent = api.get_recent_files(limit=20)
+    assert recent["success"]
+    assert recent["files"][0]["file_path"] == str(file_b.resolve())
+    assert recent["files"][1]["file_path"] == str(file_a.resolve())
+
+
+def test_session_state_restored_after_restart(monkeypatch, tmp_path):
+    db_path = tmp_path / "deepread.db"
+    file_path = tmp_path / "restore.pdf"
+    _touch(file_path)
+
+    api = _make_api(monkeypatch, db_path)
+    assert api.open_pdf(str(file_path))["success"]
+    save_result = api.save_session_state(
+        str(file_path),
+        {
+            "last_page": 7,
+            "last_zoom": 1.75,
+            "ocr_enabled": True,
+            "ocr_mode": "document",
+        },
+    )
+    assert save_result["success"]
+    api.persistence.close()
+
+    api2 = _make_api(monkeypatch, db_path)
+    reopened = api2.open_pdf(str(file_path))
+    assert reopened["success"]
+    assert reopened["session_state"]["last_page"] == 7
+    assert reopened["session_state"]["last_zoom"] == 1.75
+    assert reopened["session_state"]["ocr_enabled"] is True
+    assert reopened["session_state"]["ocr_mode"] == "document"
+
+
+def test_page_notes_persist_after_restart(monkeypatch, tmp_path):
+    db_path = tmp_path / "deepread.db"
+    file_path = tmp_path / "notes.pdf"
+    _touch(file_path)
+
+    notes = [
+        {
+            "id": "n1",
+            "page": 2,
+            "quote": "quoted text",
+            "note": "my note",
+            "rectPdf": {"x1": 10, "y1": 20, "x2": 60, "y2": 70},
+            "createdAt": "2026-02-15T10:00:00Z",
+            "updatedAt": "2026-02-15T10:05:00Z",
+        }
+    ]
+
+    api = _make_api(monkeypatch, db_path)
+    assert api.open_pdf(str(file_path))["success"]
+    save_result = api.save_page_notes(str(file_path), notes)
+    assert save_result["success"]
+    assert save_result["saved"] == 1
+    api.persistence.close()
+
+    api2 = _make_api(monkeypatch, db_path)
+    reopened = api2.open_pdf(str(file_path))
+    assert reopened["success"]
+    assert len(reopened["page_notes"]) == 1
+    assert reopened["page_notes"][0]["id"] == "n1"
+    assert reopened["page_notes"][0]["note"] == "my note"
+
+
+def test_delete_page_note(monkeypatch, tmp_path):
+    db_path = tmp_path / "deepread.db"
+    file_path = tmp_path / "delete.pdf"
+    _touch(file_path)
+
+    api = _make_api(monkeypatch, db_path)
+    assert api.open_pdf(str(file_path))["success"]
+    api.save_page_notes(
+        str(file_path),
+        [
+            {
+                "id": "n1",
+                "page": 1,
+                "quote": "q1",
+                "note": "",
+                "rectPdf": {"x1": 1, "y1": 1, "x2": 2, "y2": 2},
+            },
+            {
+                "id": "n2",
+                "page": 1,
+                "quote": "q2",
+                "note": "",
+                "rectPdf": {"x1": 2, "y1": 2, "x2": 3, "y2": 3},
+            },
+        ],
+    )
+    delete_result = api.delete_page_note(str(file_path), "n1")
+    assert delete_result["success"]
+
+    reopened = api.open_pdf(str(file_path))
+    note_ids = [item["id"] for item in reopened["page_notes"]]
+    assert note_ids == ["n2"]
+
+
+def test_recent_files_prunes_missing_paths(monkeypatch, tmp_path):
+    db_path = tmp_path / "deepread.db"
+    file_path = tmp_path / "missing.pdf"
+    _touch(file_path)
+
+    api = _make_api(monkeypatch, db_path)
+    assert api.open_pdf(str(file_path))["success"]
+    file_path.unlink()
+
+    recent = api.get_recent_files(limit=20)
+    assert recent["success"]
+    assert recent["files"] == []
+
+
+def test_persistence_migrates_legacy_documents_schema(tmp_path):
+    db_path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE documents (
+            file_path TEXT PRIMARY KEY,
+            file_name TEXT NOT NULL,
+            last_opened_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    store = PersistenceStore(db_path=str(db_path))
+    store.save_session_state(
+        str(tmp_path / "legacy.pdf"),
+        last_page=3,
+        last_zoom=1.5,
+        ocr_enabled=True,
+        ocr_mode="document",
+    )
+    state = store.get_session_state(str(tmp_path / "legacy.pdf"))
+    assert state["last_page"] == 3
+    assert state["last_zoom"] == 1.5
+    assert state["ocr_enabled"] is True
+    assert state["ocr_mode"] == "document"

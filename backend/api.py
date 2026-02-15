@@ -12,6 +12,7 @@ import time
 
 from .pdf_engine import PDFEngine
 from .ai_service import AIService
+from .persistence import PersistenceStore
 
 
 class DeepReadAPI:
@@ -46,6 +47,18 @@ class DeepReadAPI:
             "error": "",
         }
 
+        # Local persistence (session state, recent files, page notes)
+        self.persistence: Optional[PersistenceStore] = None
+        self._persistence_error: Optional[str] = None
+        try:
+            self.persistence = PersistenceStore(db_path=os.getenv("DEEPREAD_DB_PATH"))
+        except Exception as e:
+            self._persistence_error = str(e)
+
+    @staticmethod
+    def _normalize_file_path(file_path: str) -> str:
+        return os.path.abspath(os.path.expanduser(file_path))
+
     # ==================== PDF Operations ====================
 
     def open_pdf(self, file_path: str) -> dict:
@@ -59,22 +72,42 @@ class DeepReadAPI:
             Dict with success status, page count, and metadata
         """
         try:
+            normalized_path = self._normalize_file_path(file_path)
+
             # Close existing PDF if any
             if self.pdf_engine:
                 self.pdf_engine.close()
                 self._cleanup_ocr()
 
-            self.pdf_engine = PDFEngine(file_path)
-            self.current_pdf_path = file_path
+            self.pdf_engine = PDFEngine(normalized_path)
+            self.current_pdf_path = normalized_path
 
             metadata = self.pdf_engine.get_metadata()
+            session_state = {
+                "last_page": 1,
+                "last_zoom": 1.0,
+                "ocr_enabled": False,
+                "ocr_mode": "page",
+            }
+            page_notes: list[dict] = []
+
+            if self.persistence:
+                self.persistence.record_document_opened(
+                    normalized_path,
+                    metadata.get("file_name") or os.path.basename(normalized_path),
+                )
+                session_state = self.persistence.get_session_state(normalized_path)
+                page_notes = self.persistence.list_page_notes(normalized_path)
 
             return {
                 "success": True,
+                "file_path": normalized_path,
                 "page_count": metadata["page_count"],
                 "file_name": metadata["file_name"],
                 "title": metadata.get("title", ""),
                 "metadata": metadata,
+                "session_state": session_state,
+                "page_notes": page_notes,
             }
         except Exception as e:
             return {
@@ -168,6 +201,86 @@ class DeepReadAPI:
             "success": True,
             "metadata": self.pdf_engine.get_metadata(),
         }
+
+    def get_recent_files(self, limit: int = 20) -> dict:
+        """Return recent files ordered by latest open time."""
+        if not self.persistence:
+            return {"success": True, "files": []}
+        try:
+            files = self.persistence.get_recent_files(limit=limit, prune_missing=True)
+            return {"success": True, "files": files}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def save_session_state(self, file_path: str, state: Optional[dict] = None) -> dict:
+        """
+        Persist the current document view state.
+
+        Args:
+            file_path: Document path (falls back to current_pdf_path when empty)
+            state: Dict with last_page, last_zoom, ocr_enabled, ocr_mode
+        """
+        if not self.persistence:
+            return {"success": False, "error": self._persistence_error or "Persistence unavailable"}
+
+        try:
+            target_path = file_path or self.current_pdf_path
+            if not target_path:
+                return {"success": False, "error": "No PDF path provided"}
+
+            payload = state or {}
+            last_page = int(payload.get("last_page") or payload.get("page") or 1)
+            last_zoom = float(payload.get("last_zoom") or payload.get("zoom") or 1.0)
+            if "ocr_enabled" in payload:
+                ocr_enabled = bool(payload.get("ocr_enabled"))
+            else:
+                ocr_enabled = bool(payload.get("ocrEnabled", False))
+            ocr_mode = payload.get("ocr_mode") or payload.get("ocrMode") or "page"
+
+            self.persistence.save_session_state(
+                target_path,
+                last_page=last_page,
+                last_zoom=last_zoom,
+                ocr_enabled=ocr_enabled,
+                ocr_mode=str(ocr_mode),
+            )
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def save_page_notes(self, file_path: str, notes: Optional[list] = None) -> dict:
+        """
+        Persist all page notes for a document.
+
+        Args:
+            file_path: Document path (falls back to current_pdf_path when empty)
+            notes: Full note list for the document
+        """
+        if not self.persistence:
+            return {"success": False, "error": self._persistence_error or "Persistence unavailable"}
+
+        try:
+            target_path = file_path or self.current_pdf_path
+            if not target_path:
+                return {"success": False, "error": "No PDF path provided"}
+            stats = self.persistence.save_page_notes(target_path, notes or [])
+            return {"success": True, **stats}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def delete_page_note(self, file_path: str, note_id: str) -> dict:
+        """Delete a single page note for a document."""
+        if not self.persistence:
+            return {"success": False, "error": self._persistence_error or "Persistence unavailable"}
+
+        try:
+            target_path = file_path or self.current_pdf_path
+            if not target_path:
+                return {"success": False, "error": "No PDF path provided"}
+            self.persistence.delete_page_note(target_path, note_id)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     # ==================== OCR Operations ====================
 

@@ -38,10 +38,18 @@ const API = {
         const mocks = {
             open_pdf: () => ({
                 success: true,
+                file_path: '/path/to/sample.pdf',
                 page_count: 42,
                 file_name: 'sample.pdf',
                 title: 'Sample Document',
-                metadata: { page_count: 42 }
+                metadata: { page_count: 42 },
+                session_state: {
+                    last_page: 1,
+                    last_zoom: 1.0,
+                    ocr_enabled: false,
+                    ocr_mode: 'page'
+                },
+                page_notes: []
             }),
             get_page: () => ({
                 success: true,
@@ -94,6 +102,20 @@ const API = {
             get_app_info: () => ({
                 name: 'DeepRead AI',
                 version: '0.2.0 (Mock)'
+            }),
+            get_recent_files: () => ({
+                success: true,
+                files: []
+            }),
+            save_session_state: () => ({
+                success: true
+            }),
+            save_page_notes: () => ({
+                success: true,
+                saved: Array.isArray(args[1]) ? args[1].length : 0
+            }),
+            delete_page_note: () => ({
+                success: true
             })
         };
 
@@ -186,6 +208,45 @@ const API = {
      */
     async selectPdfFile() {
         return this.call('select_pdf_file');
+    },
+
+    /**
+     * Get recent files list
+     * @param {number} limit - Max number of recent files
+     * @returns {Promise<{success: boolean, files?: Array}>}
+     */
+    async getRecentFiles(limit = 20) {
+        return this.call('get_recent_files', limit);
+    },
+
+    /**
+     * Save document session state
+     * @param {string} filePath - Absolute path to current PDF
+     * @param {Object} state - {last_page, last_zoom, ocr_enabled, ocr_mode}
+     * @returns {Promise<{success: boolean}>}
+     */
+    async saveSessionState(filePath, state) {
+        return this.call('save_session_state', filePath, state);
+    },
+
+    /**
+     * Save all page notes for a document
+     * @param {string} filePath - Absolute path to current PDF
+     * @param {Array} notes - Full note list for the document
+     * @returns {Promise<{success: boolean, saved?: number}>}
+     */
+    async savePageNotes(filePath, notes) {
+        return this.call('save_page_notes', filePath, notes);
+    },
+
+    /**
+     * Delete a single page note
+     * @param {string} filePath - Absolute path to current PDF
+     * @param {string} noteId - Note id
+     * @returns {Promise<{success: boolean}>}
+     */
+    async deletePageNote(filePath, noteId) {
+        return this.call('delete_page_note', filePath, noteId);
     },
 
     // ==================== AI Operations ====================
