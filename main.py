@@ -121,17 +121,17 @@ def main():
     # Quick dependency check (imports deferred to avoid slow startup)
     try:
         import fitz  # PyMuPDF - core dependency, check early
-        print("✓ PyMuPDF available")
+        print("[OK] PyMuPDF available")
     except ImportError:
-        print("⚠ PyMuPDF not installed. Install with: pip install PyMuPDF")
+        print("[WARN] PyMuPDF not installed. Install with: pip install PyMuPDF")
 
     if os.getenv("OPENAI_API_KEY"):
-        print("✓ OpenAI API key configured")
+        print("[OK] OpenAI API key configured")
     else:
-        print("ℹ OpenAI API key not set (set OPENAI_API_KEY env var)")
+        print("[INFO] OpenAI API key not set (set OPENAI_API_KEY env var)")
 
     if os.name == "nt" and not _has_webview2_runtime():
-        print("✗ Microsoft Edge WebView2 Runtime not found.")
+        print("[ERROR] Microsoft Edge WebView2 Runtime not found.")
         print("  Please install it, then restart DeepRead AI:")
         print("  https://developer.microsoft.com/en-us/microsoft-edge/webview2/")
         sys.exit(1)
@@ -147,8 +147,8 @@ def main():
         print(f"Error: Frontend not found at {index_html}")
         sys.exit(1)
 
-    print(f"✓ Frontend loaded from: {frontend_path}")
-    print("✓ Starting webview window...")
+    print(f"[OK] Frontend loaded from: {frontend_path}")
+    print("[OK] Starting webview window...")
     print("=" * 50)
 
     # Create the window
@@ -168,9 +168,9 @@ def main():
 
     def _on_webview_started():
         renderer = getattr(webview, "renderer", "unknown")
-        print(f"✓ WebView renderer: {renderer}")
+        print(f"[OK] WebView renderer: {renderer}")
         if os.name == "nt" and renderer == "mshtml":
-            print("⚠ Detected legacy MSHTML renderer. Install WebView2 Runtime for full compatibility.")
+            print("[WARN] Detected legacy MSHTML renderer. Install WebView2 Runtime for full compatibility.")
 
     # Start the webview
     webview.start(
@@ -179,7 +179,7 @@ def main():
         http_server=True,
     )
 
-    print("\n✓ DeepRead AI closed")
+    print("\n[OK] DeepRead AI closed")
 
 
 if __name__ == "__main__":
