@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,15 @@ def _normalize_path(file_path: str) -> str:
 
 
 def _default_data_dir(app_name: str) -> Path:
+    portable_mode = os.getenv("DEEPREAD_PORTABLE_MODE", "").strip().lower()
+    if portable_mode in {"1", "true", "yes"}:
+        override_dir = os.getenv("DEEPREAD_PORTABLE_DIR", "").strip()
+        if override_dir:
+            return Path(override_dir).expanduser()
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).resolve().parent / "data"
+        return Path.cwd() / ".deepread-data"
+
     home = Path.home()
     if os.name == "nt":
         base = Path(os.getenv("APPDATA", str(home / "AppData" / "Roaming")))

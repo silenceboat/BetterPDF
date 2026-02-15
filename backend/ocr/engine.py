@@ -6,6 +6,11 @@ from pathlib import Path
 
 
 class Engine:
+    MODEL_PAIRS = (
+        ("PP-OCRv5_mobile_det", "PP-OCRv5_mobile_rec"),
+        ("PP-OCRv5_server_det", "PP-OCRv5_server_rec"),
+    )
+
     def __init__(self, ocr_model=None):
         self._ocr_model = ocr_model
         self._configure_model_source()
@@ -17,9 +22,29 @@ class Engine:
         PaddleOCR 3.x defaults to HuggingFace; on many CN networks this is
         unreliable. Respect user-provided env var, otherwise fall back to BOS.
         """
+        packaged_model_root = os.environ.get("DEEPREAD_OCR_MODEL_DIR", "").strip()
+        if packaged_model_root:
+            self._activate_local_model_root(packaged_model_root)
+
         if os.name == "nt":
             os.environ.setdefault("PADDLE_PDX_MODEL_SOURCE", "BOS")
             self._configure_windows_cache_home()
+
+    def _activate_local_model_root(self, model_root: str):
+        """
+        Point PaddleX cache to a bundled model root when available.
+        """
+        root = Path(model_root).expanduser()
+        try:
+            resolved = root.resolve()
+        except Exception:
+            resolved = root
+
+        if not resolved.exists():
+            return
+
+        os.environ.setdefault("PADDLE_PDX_CACHE_HOME", str(resolved))
+        os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
     @staticmethod
     def _is_ascii_path(path_str: str) -> bool:
@@ -83,6 +108,22 @@ class Engine:
             deduped.append(root)
         return deduped
 
+    def _get_local_model_dir(self, model_name: str) -> Path | None:
+        for root in self._get_model_cache_roots():
+            model_dir = root / "official_models" / model_name
+            if (model_dir / "inference.json").exists():
+                return model_dir
+        return None
+
+    def _resolve_model_pair(self) -> tuple[str, str]:
+        """
+        Prefer already-downloaded model pairs; fall back to mobile pair.
+        """
+        for det_name, rec_name in self.MODEL_PAIRS:
+            if self._get_local_model_dir(det_name) and self._get_local_model_dir(rec_name):
+                return det_name, rec_name
+        return self.MODEL_PAIRS[0]
+
     def _is_within_allowed_roots(self, target_dir: Path, allowed_roots: list[Path]) -> bool:
         try:
             target_resolved = target_dir.resolve()
@@ -119,10 +160,11 @@ class Engine:
         key files are missing. Remove incomplete directories proactively.
         """
         allowed_roots = self._get_model_cache_roots()
-        model_names = [
-            "PP-OCRv5_mobile_det",
-            "PP-OCRv5_mobile_rec",
-        ]
+        model_names = {
+            model_name
+            for det_name, rec_name in self.MODEL_PAIRS
+            for model_name in (det_name, rec_name)
+        }
 
         for root in allowed_roots:
             for model_name in model_names:
@@ -152,12 +194,26 @@ class Engine:
             "use_doc_unwarping": False,
             "use_textline_orientation": False,
         }
+        det_name, rec_name = self._resolve_model_pair()
+        det_dir = self._get_local_model_dir(det_name)
+        rec_dir = self._get_local_model_dir(rec_name)
+
+        if det_dir and rec_dir:
+            local_kwargs = {
+                "text_detection_model_dir": str(det_dir),
+                "text_recognition_model_dir": str(rec_dir),
+            }
+            try:
+                return PaddleOCR(**local_kwargs, **kwargs)
+            except TypeError:
+                # Some builds may not expose *_model_dir kwargs.
+                pass
 
         # Prefer mobile models to reduce download size and improve cold-start.
         try:
             return PaddleOCR(
-                text_detection_model_name="PP-OCRv5_mobile_det",
-                text_recognition_model_name="PP-OCRv5_mobile_rec",
+                text_detection_model_name=det_name,
+                text_recognition_model_name=rec_name,
                 **kwargs,
             )
         except TypeError:

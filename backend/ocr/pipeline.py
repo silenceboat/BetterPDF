@@ -1,12 +1,13 @@
+from .engine import Engine
+from .normalize import Normalize
+from .rendering import Renderer
+
+
 class OCRPipeline:
     def __init__(self, pdf_path, output_folder, dpi=150):
         self.pdf_path = pdf_path
         self.output_folder = output_folder
         self.dpi = dpi
-
-        from .engine import Engine
-        from .normalize import Normalize
-        from .rendering import Renderer
 
         self.renderer = Renderer(pdf_path, output_folder)
         self.engine = Engine()

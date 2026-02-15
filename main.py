@@ -23,9 +23,40 @@ except ImportError:
 from backend import DeepReadAPI
 
 
+def get_resource_base() -> Path:
+    """Return bundle resource base path for source/dev and frozen builds."""
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass)
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).parent
+
+
 def get_frontend_path() -> Path:
     """Get the path to the frontend directory."""
-    return Path(__file__).parent / "frontend"
+    return get_resource_base() / "frontend"
+
+
+def _configure_packaged_runtime_env():
+    """
+    Configure bundled runtime paths for frozen builds.
+    """
+    if not getattr(sys, "frozen", False):
+        return
+
+    os.environ.setdefault("DEEPREAD_PACKAGED", "1")
+
+    base = get_resource_base()
+    exe_dir = Path(sys.executable).resolve().parent
+    model_candidates = [base / "models", exe_dir / "models"]
+    for model_dir in model_candidates:
+        if not model_dir.exists():
+            continue
+        os.environ.setdefault("DEEPREAD_OCR_MODEL_DIR", str(model_dir))
+        os.environ.setdefault("PADDLE_PDX_CACHE_HOME", str(model_dir))
+        os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+        break
 
 
 def _version_gte(current: str, required: str) -> bool:
@@ -82,6 +113,8 @@ def _has_webview2_runtime() -> bool:
 
 def main():
     """Main entry point."""
+    _configure_packaged_runtime_env()
+
     print("Starting DeepRead AI...")
     print("=" * 50)
 

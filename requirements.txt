@@ -1,16 +1,8 @@
-# DeepRead AI - Dependencies
-
-# Web UI
-pywebview>=4.4
-
-# PDF Processing
-PyMuPDF>=1.23
-Pillow>=10.0
-
-# AI Integration (optional but recommended)
+# BetterPDF Runtime Dependencies
 openai>=1.0
+paddleocr[all]>=3.4.0
+paddlepaddle==3.2.0
+Pillow>=10.0
+PyMuPDF>=1.23
+pywebview>=4.4
 requests>=2.28
-
-# Development
-pytest>=7.0
-pytest-cov>=4.0
