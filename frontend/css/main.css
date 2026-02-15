@@ -503,6 +503,7 @@ body.pdf-focus-mode .right-panel {
     flex-direction: column;
     position: relative;
     min-width: 0;
+    min-height: 0;
 }
 
 .panel-splitter {
@@ -641,11 +642,11 @@ body.is-resizing-panels {
 .pdf-viewport {
     flex: 1;
     display: block;
-    align-items: flex-start;
-    justify-content: flex-start;
     overflow: auto;
     padding: 0;
     position: relative;
+    min-width: 0;
+    min-height: 0;
     scrollbar-gutter: stable both-edges;
     scroll-behavior: smooth;
     background:
@@ -674,6 +675,8 @@ body.is-resizing-panels {
 
 .pdf-page-container {
     position: relative;
+    width: max-content;
+    margin: 0 auto 20px;
     box-shadow: var(--shadow-paper);
     border-radius: 0;
     overflow: hidden;
