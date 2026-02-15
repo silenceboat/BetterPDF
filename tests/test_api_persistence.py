@@ -146,6 +146,48 @@ def test_ai_settings_persist_after_restart(monkeypatch, tmp_path):
     assert loaded["settings"]["api_key"] == "sk-test-key"
 
 
+def test_anthropic_settings_persist_after_restart(monkeypatch, tmp_path):
+    db_path = tmp_path / "deepread.db"
+    api = _make_api(monkeypatch, db_path)
+
+    save_result = api.save_ai_settings(
+        {
+            "provider": "anthropic",
+            "model": "claude-3-5-haiku-latest",
+            "base_url": "https://api.anthropic.com/",
+            "api_key": "sk-ant-test",
+        }
+    )
+    assert save_result["success"]
+    assert save_result["settings"]["provider"] == "anthropic"
+    assert save_result["settings"]["base_url"] == "https://api.anthropic.com"
+    if api._persistence:
+        api._persistence.close()
+
+    api2 = _make_api(monkeypatch, db_path)
+    loaded = api2.get_ai_settings()
+    assert loaded["success"]
+    assert loaded["settings"]["provider"] == "anthropic"
+    assert loaded["settings"]["model"] == "claude-3-5-haiku-latest"
+
+
+def test_save_anthropic_settings_requires_key(monkeypatch, tmp_path):
+    db_path = tmp_path / "deepread.db"
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    api = _make_api(monkeypatch, db_path)
+
+    save_result = api.save_ai_settings(
+        {
+            "provider": "anthropic",
+            "model": "claude-3-5-haiku-latest",
+            "base_url": "https://api.anthropic.com",
+            "api_key": "",
+        }
+    )
+    assert save_result["success"] is False
+    assert "API Key is required for Anthropic provider" in save_result["error"]
+
+
 def test_delete_page_note(monkeypatch, tmp_path):
     db_path = tmp_path / "deepread.db"
     file_path = tmp_path / "delete.pdf"
@@ -244,3 +286,15 @@ def test_persistence_ai_settings_roundtrip(tmp_path):
     assert loaded["model"] == "gpt-4o-mini"
     assert loaded["base_url"] == "https://proxy.example.com/v1"
     assert loaded["api_key"] == "sk-local"
+
+    store.save_ai_settings(
+        provider="anthropic",
+        model="claude-3-5-haiku-latest",
+        base_url="https://api.anthropic.com/",
+        api_key="sk-ant-local",
+    )
+    loaded2 = store.get_ai_settings()
+    assert loaded2["provider"] == "anthropic"
+    assert loaded2["model"] == "claude-3-5-haiku-latest"
+    assert loaded2["base_url"] == "https://api.anthropic.com"
+    assert loaded2["api_key"] == "sk-ant-local"

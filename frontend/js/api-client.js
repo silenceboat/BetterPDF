@@ -84,11 +84,11 @@ const API = {
             save_ai_settings: () => ({
                 success: true,
                 settings: {
-                    provider: 'openai',
-                    model: args[0]?.model || 'gpt-4o-mini',
+                    provider: args[0]?.provider || 'openai',
+                    model: args[0]?.model || (args[0]?.provider === 'anthropic' ? 'claude-3-5-haiku-latest' : args[0]?.provider === 'ollama' ? 'llama3.2' : 'gpt-4o-mini'),
                     base_url: args[0]?.base_url || '',
                     api_key: args[0]?.api_key || '',
-                    has_api_key: !!(args[0]?.api_key)
+                    has_api_key: args[0]?.provider === 'ollama' ? true : !!(args[0]?.api_key)
                 }
             }),
             ocr_page: () => ({

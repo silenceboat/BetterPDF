@@ -1098,10 +1098,7 @@ body.is-resizing-panels {
 .ai-chat-head {
     padding: 14px var(--space-md);
     border-bottom: 1px solid var(--border-color);
-    background:
-        radial-gradient(120% 150% at 5% -40%, rgba(212, 160, 60, 0.2) 0%, rgba(212, 160, 60, 0) 62%),
-        linear-gradient(180deg, rgba(212, 160, 60, 0.09) 0%, rgba(212, 160, 60, 0.01) 100%),
-        var(--bg-secondary);
+    background: var(--bg-secondary);
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1416,22 +1413,7 @@ body.is-resizing-panels {
     flex-direction: column;
     gap: var(--space-md);
     padding: var(--space-lg);
-    background:
-        radial-gradient(120% 120% at 100% -30%, rgba(212, 160, 60, 0.14) 0%, rgba(212, 160, 60, 0) 68%),
-        linear-gradient(180deg, rgba(212, 160, 60, 0.05) 0%, rgba(212, 160, 60, 0) 55%),
-        var(--bg-secondary);
-    animation: settingsRise var(--transition-normal) ease;
-}
-
-@keyframes settingsRise {
-    from {
-        opacity: 0;
-        transform: translateY(8px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+    background: var(--bg-secondary);
 }
 
 .settings-hero {
@@ -1449,8 +1431,8 @@ body.is-resizing-panels {
 .settings-title {
     margin-top: 4px;
     font-family: var(--font-display);
-    font-size: 32px;
-    line-height: 1.08;
+    font-size: 28px;
+    line-height: 1.12;
     color: var(--ink-primary);
 }
 
@@ -1465,11 +1447,9 @@ body.is-resizing-panels {
 .settings-card {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-xl);
-    background:
-        linear-gradient(180deg, rgba(212, 160, 60, 0.06) 0%, rgba(212, 160, 60, 0.02) 100%),
-        var(--bg-elevated);
+    background: var(--bg-elevated);
     padding: var(--space-lg);
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow-sm);
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -1484,7 +1464,7 @@ body.is-resizing-panels {
 
 .settings-card-title {
     font-family: var(--font-display);
-    font-size: 23px;
+    font-size: 21px;
     line-height: 1.2;
     color: var(--ink-primary);
 }
@@ -1531,6 +1511,7 @@ body.is-resizing-panels {
 
 .settings-fields {
     display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 12px;
 }
 
@@ -1547,12 +1528,13 @@ body.is-resizing-panels {
     letter-spacing: 0.02em;
 }
 
-.settings-field input {
+.settings-field input,
+.settings-field select {
     width: 100%;
     height: 42px;
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
-    background: var(--bg-paper);
+    background: var(--bg-elevated);
     color: var(--ink-primary);
     padding: 0 12px;
     font-size: 13px;
@@ -1560,11 +1542,21 @@ body.is-resizing-panels {
     transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
 }
 
-.settings-field input:focus {
+.settings-field select {
+    appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--ink-muted) 50%), linear-gradient(135deg, var(--ink-muted) 50%, transparent 50%);
+    background-position: calc(100% - 18px) calc(1em + 1px), calc(100% - 12px) calc(1em + 1px);
+    background-size: 6px 6px, 6px 6px;
+    background-repeat: no-repeat;
+    padding-right: 36px;
+}
+
+.settings-field input:focus,
+.settings-field select:focus {
     outline: none;
     border-color: var(--accent-primary);
     background: var(--bg-elevated);
-    box-shadow: 0 0 0 3px var(--accent-glow);
+    box-shadow: 0 0 0 2px var(--accent-glow);
 }
 
 .settings-input-wrap {
@@ -1600,6 +1592,13 @@ body.is-resizing-panels {
     color: var(--ink-primary);
 }
 
+.settings-provider-hint {
+    margin-top: -2px;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--ink-muted);
+}
+
 .settings-actions {
     display: flex;
     gap: var(--space-sm);
@@ -1631,7 +1630,7 @@ body.is-resizing-panels {
 .settings-note {
     border: 1px dashed var(--border-color);
     border-radius: var(--radius-lg);
-    background: var(--bg-elevated);
+    background: transparent;
     padding: 12px 14px;
     color: var(--ink-muted);
     font-size: 13px;
@@ -1992,6 +1991,10 @@ body.is-resizing-panels {
 
     .settings-card-head {
         flex-direction: column;
+    }
+
+    .settings-fields {
+        grid-template-columns: 1fr;
     }
 
     .settings-actions {

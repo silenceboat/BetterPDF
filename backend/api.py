@@ -623,12 +623,17 @@ class DeepReadAPI:
         """Persist and apply AI provider settings."""
         try:
             payload = settings or {}
-            provider = payload.get("provider") or "openai"
+            provider = str(payload.get("provider") or "openai").strip().lower()
+            if provider not in {"openai", "anthropic", "ollama"}:
+                provider = "openai"
             base_url = str(payload.get("base_url") or payload.get("baseUrl") or "").strip().rstrip("/")
             api_key = str(payload.get("api_key") or payload.get("apiKey") or "").strip()
             model = str(payload.get("model") or "").strip() or None
 
-            if provider == "openai" and not api_key and not os.getenv("OPENAI_API_KEY"):
+            env_key = "OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY"
+            if provider in {"openai", "anthropic"} and not api_key and not os.getenv(env_key):
+                if provider == "anthropic":
+                    return {"success": False, "error": "API Key is required for Anthropic provider"}
                 return {"success": False, "error": "API Key is required for OpenAI-compatible providers"}
 
             self.ai_service.configure(

@@ -9,6 +9,8 @@ from typing import Any, Optional
 class AIService:
     """AI service for chat and document analysis."""
 
+    _VALID_PROVIDERS = {"openai", "anthropic", "ollama"}
+
     def __init__(
         self,
         provider: str = "openai",
@@ -16,7 +18,7 @@ class AIService:
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
     ):
-        self.provider = provider if provider in {"openai", "ollama"} else "openai"
+        self.provider = self._normalize_provider(provider)
         self.model = model or self._get_default_model()
         self.base_url = self._normalize_base_url(base_url)
         self.api_key = str(api_key or "").strip()
@@ -28,13 +30,30 @@ class AIService:
         """Get default model for the provider."""
         defaults = {
             "openai": "gpt-4o-mini",
+            "anthropic": "claude-3-5-haiku-latest",
             "ollama": "llama3.2",
         }
         return defaults.get(self.provider, "gpt-4o-mini")
 
+    @classmethod
+    def _normalize_provider(cls, provider: Optional[str]) -> str:
+        candidate = str(provider or "").strip().lower()
+        return candidate if candidate in cls._VALID_PROVIDERS else "openai"
+
     @staticmethod
     def _normalize_base_url(base_url: Optional[str]) -> str:
         return str(base_url or "").strip().rstrip("/")
+
+    def _get_provider_env_key(self) -> str:
+        if self.provider == "anthropic":
+            return "ANTHROPIC_API_KEY"
+        if self.provider == "openai":
+            return "OPENAI_API_KEY"
+        return "OLLAMA_API_KEY"
+
+    def _resolve_api_key(self) -> str:
+        env_key = self._get_provider_env_key()
+        return self.api_key or os.getenv(env_key, "")
 
     def _init_client(self):
         """Mark client for lazy re-initialization."""
@@ -51,7 +70,7 @@ class AIService:
     ):
         """Update runtime AI configuration and reset lazy client."""
         if provider is not None:
-            self.provider = provider if provider in {"openai", "ollama"} else "openai"
+            self.provider = self._normalize_provider(provider)
         if model is not None:
             self.model = str(model or "").strip() or self._get_default_model()
         if base_url is not None:
@@ -62,12 +81,13 @@ class AIService:
 
     def get_config(self) -> dict[str, Any]:
         """Return active AI settings (includes key for local UI persistence)."""
+        resolved_key = self._resolve_api_key()
         return {
             "provider": self.provider,
             "model": self.model,
             "base_url": self.base_url,
             "api_key": self.api_key,
-            "has_api_key": bool(self.api_key or os.getenv("OPENAI_API_KEY")),
+            "has_api_key": bool(resolved_key),
         }
 
     def _ensure_client(self):
@@ -79,7 +99,7 @@ class AIService:
         if self.provider == "openai":
             try:
                 import openai
-                api_key = self.api_key or os.getenv("OPENAI_API_KEY", "")
+                api_key = self._resolve_api_key()
                 if api_key:
                     kwargs: dict[str, Any] = {"api_key": api_key}
                     if self.base_url:
@@ -87,6 +107,9 @@ class AIService:
                     self.client = openai.OpenAI(**kwargs)
             except ImportError:
                 pass
+        elif self.provider == "anthropic":
+            if self._resolve_api_key():
+                self.client = "anthropic"
         elif self.provider == "ollama":
             self.client = "ollama"
 
@@ -122,6 +145,8 @@ class AIService:
         self._ensure_client()
         if self.provider == "openai" and self.client:
             return self._chat_openai(messages)
+        elif self.provider == "anthropic" and self.client:
+            return self._chat_anthropic(messages)
         elif self.provider == "ollama":
             return self._chat_ollama(messages)
         else:
@@ -169,6 +194,60 @@ class AIService:
         except Exception as e:
             return f"Error connecting to Ollama: {str(e)}\nMake sure provider URL is reachable."
 
+    def _chat_anthropic(self, messages: list[dict]) -> str:
+        """Send chat request to Anthropic Messages API."""
+        import requests
+
+        try:
+            api_key = self._resolve_api_key()
+            if not api_key:
+                return "Error: Anthropic API key is missing. Set it in Settings or ANTHROPIC_API_KEY."
+
+            base_url = self.base_url or os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+            endpoint = base_url.rstrip("/") + "/v1/messages"
+
+            system_parts: list[str] = []
+            conversation: list[dict[str, str]] = []
+            for item in messages:
+                role = str(item.get("role") or "").strip().lower()
+                content = str(item.get("content") or "")
+                if role == "system":
+                    system_parts.append(content)
+                elif role in {"user", "assistant"}:
+                    conversation.append({"role": role, "content": content})
+
+            payload: dict[str, Any] = {
+                "model": self.model,
+                "messages": conversation,
+                "temperature": 0.7,
+                "max_tokens": 2000,
+            }
+            if system_parts:
+                payload["system"] = "\n\n".join(system_parts)
+
+            response = requests.post(
+                endpoint,
+                json=payload,
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                timeout=120,
+            )
+            response.raise_for_status()
+            data = response.json()
+            blocks = data.get("content") or []
+            text_parts = [
+                str(block.get("text") or "")
+                for block in blocks
+                if isinstance(block, dict) and block.get("type") == "text"
+            ]
+            merged = "\n".join(part for part in text_parts if part).strip()
+            return merged or "Error: Anthropic response did not include text content."
+        except Exception as e:
+            return f"Error connecting to Anthropic: {str(e)}\nCheck API key, model, and endpoint."
+
     def _mock_response(self, message: str, context: Optional[str]) -> str:
         """Generate a mock response when no AI provider is available."""
         if context:
@@ -185,9 +264,9 @@ class AIService:
                 f"**Response to: \"{message[:50]}...\"**\n\n"
                 f"This is a mock response. To get real AI responses, please:\n\n"
                 f"1. Set Provider URL and API Key in AI settings, or\n"
-                f"2. Set `OPENAI_API_KEY` environment variable, or\n"
+                f"2. Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` environment variable, or\n"
                 f"3. Install and run [Ollama](https://ollama.com) locally\n\n"
-                f"The app supports OpenAI-compatible provider URLs."
+                f"The app supports OpenAI-compatible URLs, Anthropic, and Ollama."
             )
 
     def ai_action(self, action: str, selected_text: str) -> str:

@@ -802,6 +802,13 @@ class AIChatPanel {
         statusEl.classList.add(state);
     }
 
+    getProviderLabel(provider) {
+        const key = String(provider || '').toLowerCase();
+        if (key === 'anthropic') return 'Anthropic';
+        if (key === 'ollama') return 'Ollama';
+        return 'OpenAI Compatible';
+    }
+
     async refreshProviderStatus() {
         try {
             const result = await API.getAiSettings();
@@ -810,10 +817,15 @@ class AIChatPanel {
                 return;
             }
 
-            if (result.settings?.has_api_key) {
-                this.setProviderStatus('Provider configured', 'configured');
+            const provider = String(result.settings?.provider || 'openai').toLowerCase();
+            const providerLabel = this.getProviderLabel(provider);
+            const hasKey = !!result.settings?.has_api_key;
+            if (provider === 'ollama') {
+                this.setProviderStatus(`${providerLabel} connected`, 'configured');
+            } else if (hasKey) {
+                this.setProviderStatus(`${providerLabel} ready`, 'configured');
             } else {
-                this.setProviderStatus('API key missing', 'warning');
+                this.setProviderStatus(`${providerLabel} key missing`, 'warning');
             }
         } catch (error) {
             this.setProviderStatus(error?.message || 'Provider status unavailable', 'error');
@@ -991,34 +1003,77 @@ class SettingsPanel {
             api_key: '',
             has_api_key: false
         };
+        this.providerMeta = {
+            openai: {
+                label: 'OpenAI Compatible',
+                model: 'gpt-4o-mini',
+                endpointPlaceholder: 'https://api.openai.com/v1',
+                endpointLabel: 'Base URL',
+                keyLabel: 'API Key',
+                keyPlaceholder: 'sk-...',
+                hint: 'Use this for OpenAI and OpenAI-compatible services like OpenRouter, Azure proxy, or self-hosted gateways.',
+            },
+            anthropic: {
+                label: 'Anthropic',
+                model: 'claude-3-5-haiku-latest',
+                endpointPlaceholder: 'https://api.anthropic.com',
+                endpointLabel: 'API Origin',
+                keyLabel: 'Anthropic API Key',
+                keyPlaceholder: 'sk-ant-...',
+                hint: 'Uses Anthropic Messages API. If API Origin is empty, the app uses https://api.anthropic.com.',
+            },
+            ollama: {
+                label: 'Ollama',
+                model: 'llama3.2',
+                endpointPlaceholder: 'http://localhost:11434',
+                endpointLabel: 'Ollama URL',
+                keyLabel: 'Authorization (Optional)',
+                keyPlaceholder: 'Bearer token (optional)',
+                hint: 'Local inference mode. API key is optional and only used if your Ollama endpoint requires auth.',
+            },
+        };
     }
 
     render(container) {
         container.innerHTML = `
             <div class="settings-shell">
                 <section class="settings-hero">
-                    <div class="settings-eyebrow">Control Room</div>
-                    <h2 class="settings-title">AI Provider Settings</h2>
-                    <p class="settings-subtitle">Connect an OpenAI-compatible endpoint and keep AI chat lightweight.</p>
+                    <div class="settings-eyebrow">Settings</div>
+                    <h2 class="settings-title">AI Connection</h2>
+                    <p class="settings-subtitle">Configure which provider handles chat and quick actions.</p>
                 </section>
 
                 <section class="settings-card">
                     <div class="settings-card-head">
                         <div>
-                            <h3 class="settings-card-title">Provider Connection</h3>
-                            <p class="settings-card-desc">Set provider URL and API key used by AI actions in this app.</p>
+                            <h3 class="settings-card-title">Provider Profile</h3>
+                            <p class="settings-card-desc">These values are saved locally and applied immediately.</p>
                         </div>
                         <span class="settings-status-pill" id="settings-ai-status-pill">Loading...</span>
                     </div>
 
                     <div class="settings-fields">
                         <label class="settings-field">
-                            <span class="settings-field-label">Provider URL</span>
+                            <span class="settings-field-label">Provider</span>
+                            <select id="settings-ai-provider">
+                                <option value="openai">OpenAI Compatible</option>
+                                <option value="anthropic">Anthropic</option>
+                                <option value="ollama">Ollama</option>
+                            </select>
+                        </label>
+
+                        <label class="settings-field">
+                            <span class="settings-field-label">Model</span>
+                            <input type="text" id="settings-ai-model" placeholder="gpt-4o-mini" spellcheck="false">
+                        </label>
+
+                        <label class="settings-field">
+                            <span class="settings-field-label" id="settings-ai-base-url-label">Base URL</span>
                             <input type="url" id="settings-ai-base-url" placeholder="https://api.openai.com/v1" spellcheck="false">
                         </label>
 
                         <label class="settings-field">
-                            <span class="settings-field-label">API Key</span>
+                            <span class="settings-field-label" id="settings-ai-key-label">API Key</span>
                             <div class="settings-input-wrap">
                                 <input type="password" id="settings-ai-api-key" placeholder="sk-..." spellcheck="false">
                                 <button type="button" class="settings-input-toggle" id="settings-ai-toggle-key">Show</button>
@@ -1026,15 +1081,17 @@ class SettingsPanel {
                         </label>
                     </div>
 
+                    <p class="settings-provider-hint" id="settings-provider-hint"></p>
+
                     <div class="settings-actions">
                         <button class="btn btn-primary" id="settings-ai-save-btn">Save Provider</button>
-                        <button class="btn btn-secondary" id="settings-ai-clear-btn">Clear Form</button>
+                        <button class="btn btn-secondary" id="settings-ai-reset-btn">Reset Suggested Values</button>
                     </div>
                     <div class="settings-feedback" id="settings-ai-feedback"></div>
                 </section>
 
                 <section class="settings-note">
-                    <p>Your settings are stored locally for this app instance. Keep your key private.</p>
+                    <p>Security note: keep API keys private. This app stores settings locally in its internal database.</p>
                 </section>
             </div>
         `;
@@ -1048,13 +1105,18 @@ class SettingsPanel {
             this.saveProviderSettings();
         });
 
-        document.getElementById('settings-ai-clear-btn')?.addEventListener('click', () => {
+        document.getElementById('settings-ai-reset-btn')?.addEventListener('click', () => {
+            const provider = this.getSelectedProvider();
+            const profile = this.getProviderProfile(provider);
+            const modelInput = document.getElementById('settings-ai-model');
             const urlInput = document.getElementById('settings-ai-base-url');
             const keyInput = document.getElementById('settings-ai-api-key');
+            if (modelInput) modelInput.value = profile.model;
             if (urlInput) urlInput.value = '';
             if (keyInput) keyInput.value = '';
-            this.setStatus('Form cleared (not saved)', 'warning');
-            this.setFeedback('Click "Save Provider" to apply cleared values.', 'neutral');
+            this.applyProviderProfile(provider);
+            this.setStatus(`${profile.label}: draft`, 'warning');
+            this.setFeedback('Suggested defaults applied. Save to activate.', 'neutral');
         });
 
         document.getElementById('settings-ai-toggle-key')?.addEventListener('click', () => {
@@ -1066,9 +1128,15 @@ class SettingsPanel {
             toggle.textContent = toText ? 'Hide' : 'Show';
         });
 
+        document.getElementById('settings-ai-provider')?.addEventListener('change', () => {
+            const provider = this.getSelectedProvider();
+            this.applyProviderProfile(provider, { forceModel: true });
+        });
+
+        const modelInput = document.getElementById('settings-ai-model');
         const urlInput = document.getElementById('settings-ai-base-url');
         const keyInput = document.getElementById('settings-ai-api-key');
-        [urlInput, keyInput].forEach((input) => {
+        [modelInput, urlInput, keyInput].forEach((input) => {
             input?.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
                     e.preventDefault();
@@ -1076,6 +1144,40 @@ class SettingsPanel {
                 }
             });
         });
+    }
+
+    getProviderProfile(provider) {
+        return this.providerMeta[provider] || this.providerMeta.openai;
+    }
+
+    getSelectedProvider() {
+        const providerSelect = document.getElementById('settings-ai-provider');
+        return String(providerSelect?.value || 'openai').toLowerCase();
+    }
+
+    applyProviderProfile(provider, options = {}) {
+        const { forceModel = false } = options;
+        const profile = this.getProviderProfile(provider);
+        const modelInput = document.getElementById('settings-ai-model');
+        const baseUrlLabel = document.getElementById('settings-ai-base-url-label');
+        const baseUrlInput = document.getElementById('settings-ai-base-url');
+        const keyLabel = document.getElementById('settings-ai-key-label');
+        const keyInput = document.getElementById('settings-ai-api-key');
+        const hint = document.getElementById('settings-provider-hint');
+
+        if (baseUrlLabel) baseUrlLabel.textContent = profile.endpointLabel;
+        if (baseUrlInput) baseUrlInput.placeholder = profile.endpointPlaceholder;
+        if (keyLabel) keyLabel.textContent = profile.keyLabel;
+        if (keyInput) keyInput.placeholder = profile.keyPlaceholder;
+        if (hint) hint.textContent = profile.hint;
+
+        if (modelInput && (forceModel || !modelInput.value.trim())) {
+            modelInput.value = profile.model;
+        }
+    }
+
+    getProviderLabel(provider) {
+        return this.getProviderProfile(provider).label;
     }
 
     setStatus(message, state = 'warning') {
@@ -1108,17 +1210,25 @@ class SettingsPanel {
                 ...(result.settings || {})
             };
 
+            const provider = String(this.providerSettings.provider || 'openai').toLowerCase();
+            const profile = this.getProviderProfile(provider);
+            const providerSelect = document.getElementById('settings-ai-provider');
+            const modelInput = document.getElementById('settings-ai-model');
             const urlInput = document.getElementById('settings-ai-base-url');
             const keyInput = document.getElementById('settings-ai-api-key');
+            if (providerSelect) providerSelect.value = provider;
+            if (modelInput) modelInput.value = this.providerSettings.model || profile.model;
             if (urlInput) urlInput.value = this.providerSettings.base_url || '';
             if (keyInput) keyInput.value = this.providerSettings.api_key || '';
+            this.applyProviderProfile(provider);
 
-            if (this.providerSettings.has_api_key) {
-                this.setStatus('Configured', 'configured');
-                this.setFeedback('Provider is ready. AI chat will use this connection.', 'success');
+            const hasKey = !!this.providerSettings.has_api_key;
+            if (provider === 'ollama' || hasKey) {
+                this.setStatus(`${profile.label}: active`, 'configured');
+                this.setFeedback(`${profile.label} is ready for chat requests.`, 'success');
             } else {
-                this.setStatus('Needs API key', 'warning');
-                this.setFeedback('Add an API key to enable OpenAI-compatible requests.', 'neutral');
+                this.setStatus(`${profile.label}: key required`, 'warning');
+                this.setFeedback(`Add ${profile.keyLabel.toLowerCase()} to start using ${profile.label}.`, 'neutral');
             }
         } catch (error) {
             this.setStatus('Failed to load', 'error');
@@ -1127,14 +1237,17 @@ class SettingsPanel {
     }
 
     async saveProviderSettings() {
+        const provider = this.getSelectedProvider();
+        const profile = this.getProviderProfile(provider);
+        const modelInput = document.getElementById('settings-ai-model');
         const urlInput = document.getElementById('settings-ai-base-url');
         const keyInput = document.getElementById('settings-ai-api-key');
         const saveBtn = document.getElementById('settings-ai-save-btn');
-        const clearBtn = document.getElementById('settings-ai-clear-btn');
+        const resetBtn = document.getElementById('settings-ai-reset-btn');
 
         const payload = {
-            provider: 'openai',
-            model: this.providerSettings?.model || 'gpt-4o-mini',
+            provider,
+            model: modelInput?.value?.trim() || profile.model,
             base_url: urlInput?.value?.trim() || '',
             api_key: keyInput?.value?.trim() || ''
         };
@@ -1143,8 +1256,8 @@ class SettingsPanel {
             saveBtn.disabled = true;
             saveBtn.textContent = 'Saving...';
         }
-        if (clearBtn) {
-            clearBtn.disabled = true;
+        if (resetBtn) {
+            resetBtn.disabled = true;
         }
 
         try {
@@ -1160,13 +1273,18 @@ class SettingsPanel {
                 ...(result.settings || payload)
             };
 
+            const savedProvider = String(this.providerSettings.provider || provider).toLowerCase();
+            const savedProfile = this.getProviderProfile(savedProvider);
             const hasKey = !!this.providerSettings.has_api_key;
-            this.setStatus(hasKey ? 'Configured' : 'Needs API key', hasKey ? 'configured' : 'warning');
-            this.setFeedback(
-                hasKey ? 'Provider settings saved successfully.' : 'Saved, but no API key is configured yet.',
-                hasKey ? 'success' : 'neutral'
-            );
-            window.app?.showToast('AI provider settings saved', 'success', 1600);
+            if (savedProvider === 'ollama' || hasKey) {
+                this.setStatus(`${savedProfile.label}: active`, 'configured');
+                this.setFeedback(`${savedProfile.label} settings saved.`, 'success');
+            } else {
+                this.setStatus(`${savedProfile.label}: key required`, 'warning');
+                this.setFeedback(`Saved. Add ${savedProfile.keyLabel.toLowerCase()} to activate requests.`, 'neutral');
+            }
+            this.applyProviderProfile(savedProvider);
+            window.app?.showToast(`${savedProfile.label} settings saved`, 'success', 1600);
         } catch (error) {
             this.setStatus('Save failed', 'error');
             this.setFeedback(error?.message || 'Failed to save provider settings.', 'error');
@@ -1175,8 +1293,8 @@ class SettingsPanel {
                 saveBtn.disabled = false;
                 saveBtn.textContent = 'Save Provider';
             }
-            if (clearBtn) {
-                clearBtn.disabled = false;
+            if (resetBtn) {
+                resetBtn.disabled = false;
             }
         }
     }

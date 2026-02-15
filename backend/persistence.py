@@ -379,10 +379,13 @@ class PersistenceStore:
         provider: str = "openai",
         model: str = "gpt-4o-mini",
     ):
+        normalized_provider = str(provider or "").strip().lower()
+        if normalized_provider not in {"openai", "anthropic", "ollama"}:
+            normalized_provider = "openai"
         payload = {
             "base_url": str(base_url or "").strip().rstrip("/"),
             "api_key": str(api_key or "").strip(),
-            "provider": "ollama" if provider == "ollama" else "openai",
+            "provider": normalized_provider,
             "model": str(model or "").strip() or "gpt-4o-mini",
         }
         now = _utc_now_iso()
@@ -426,6 +429,10 @@ class PersistenceStore:
         return {
             "base_url": str(payload.get("base_url") or "").strip().rstrip("/"),
             "api_key": str(payload.get("api_key") or "").strip(),
-            "provider": "ollama" if payload.get("provider") == "ollama" else "openai",
+            "provider": (
+                str(payload.get("provider") or "").strip().lower()
+                if str(payload.get("provider") or "").strip().lower() in {"openai", "anthropic", "ollama"}
+                else "openai"
+            ),
             "model": str(payload.get("model") or "").strip() or "gpt-4o-mini",
         }
