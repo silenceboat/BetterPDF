@@ -128,10 +128,8 @@ class PDFViewer {
             this.emitPageChanged();
             this.emitViewStateChanged('document-load');
 
-            if (session.ocr_enabled) {
-                this.enableOcr(this.ocrMode, { emitState: false });
-                this.emitViewStateChanged('ocr-restore');
-            }
+            // Do not auto-run OCR after reopening a document.
+            // OCR should always be a deliberate user action per session.
 
             return result;
         } else {
