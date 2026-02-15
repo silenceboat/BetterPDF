@@ -709,6 +709,13 @@ class PDFViewer {
             return;
         }
 
+        if (action === 'ask') {
+            const payload = this.getSelectionPayload();
+            if (!payload) return;
+            window.app?.startAskAiFromSelection(payload);
+            return;
+        }
+
         // Switch to AI panel and trigger action
         window.app?.switchPanel('ai');
         window.app?.aiPanel?.addUserMessage(`[${action}] ${this.selectedText.substring(0, 100)}...`);

@@ -635,6 +635,24 @@ class DeepReadApp {
         this.showToast(`Added note to page ${page}`, 'success', 1800);
     }
 
+    startAskAiFromSelection(payload) {
+        const page = Number(payload?.page);
+        const selectedText = payload?.selectedText?.trim() || '';
+        const rectPdf = this.normalizeRect(payload?.rectPdf);
+        if (!Number.isFinite(page) || page < 1 || !selectedText || !rectPdf) {
+            return;
+        }
+
+        this.switchPanel('ai');
+        this.aiPanel?.setPendingSelectionContext({
+            page,
+            selectedText,
+            rectPdf,
+            createdAt: payload?.createdAt || new Date().toISOString()
+        });
+        this.showToast(`Selection from page ${page} is attached. Ask your question in AI Chat.`, 'info', 2200);
+    }
+
     onPageChanged(page) {
         if (!Number.isFinite(page) || page < 1) return;
         this.notesPanel?.setActivePage(page);
@@ -718,6 +736,7 @@ class AIChatPanel {
         this.containerId = containerId;
         this.messages = [];
         this.isProcessing = false;
+        this.pendingSelectionContext = null;
     }
 
     render(container) {
@@ -744,6 +763,13 @@ class AIChatPanel {
                     </div>
                 </div>
                 <div class="chat-input-area">
+                    <div class="chat-selection-context" id="chat-selection-context" hidden>
+                        <div class="chat-selection-context-head">
+                            <span class="chat-selection-context-label" id="chat-selection-context-label">Selected excerpt</span>
+                            <button type="button" class="chat-selection-context-clear" id="chat-selection-context-clear">Clear</button>
+                        </div>
+                        <div class="chat-selection-context-body" id="chat-selection-context-body"></div>
+                    </div>
                     <div class="chat-input">
                         <textarea id="chat-input" placeholder="Ask about this document..."></textarea>
                         <button id="send-btn">
@@ -757,6 +783,7 @@ class AIChatPanel {
         `;
 
         this.bindEvents();
+        this.syncPendingSelectionContext();
         this.refreshProviderStatus();
     }
 
@@ -776,6 +803,9 @@ class AIChatPanel {
         // Send button
         document.getElementById('send-btn')?.addEventListener('click', () => {
             this.sendMessage();
+        });
+        document.getElementById('chat-selection-context-clear')?.addEventListener('click', () => {
+            this.clearPendingSelectionContext({ focusInput: true });
         });
 
         // Input textarea
@@ -843,17 +873,75 @@ class AIChatPanel {
         await this.processAiQuickAction(action);
     }
 
+    setPendingSelectionContext(payload) {
+        const selectedText = payload?.selectedText?.trim() || '';
+        if (!selectedText) return;
+
+        const page = Number(payload?.page);
+        this.pendingSelectionContext = {
+            page: Number.isFinite(page) && page > 0 ? Math.floor(page) : null,
+            selectedText
+        };
+        this.syncPendingSelectionContext();
+
+        const input = document.getElementById('chat-input');
+        input?.focus();
+    }
+
+    clearPendingSelectionContext(options = {}) {
+        const { focusInput = false } = options;
+        this.pendingSelectionContext = null;
+        this.syncPendingSelectionContext();
+        if (focusInput) {
+            document.getElementById('chat-input')?.focus();
+        }
+    }
+
+    syncPendingSelectionContext() {
+        const card = document.getElementById('chat-selection-context');
+        const label = document.getElementById('chat-selection-context-label');
+        const body = document.getElementById('chat-selection-context-body');
+        const input = document.getElementById('chat-input');
+        if (!card || !label || !body || !input) return;
+
+        const context = this.pendingSelectionContext;
+        if (!context?.selectedText) {
+            card.hidden = true;
+            label.textContent = 'Selected excerpt';
+            body.textContent = '';
+            input.placeholder = 'Ask about this document...';
+            return;
+        }
+
+        card.hidden = false;
+        label.textContent = context.page ? `Selected excerpt · Page ${context.page}` : 'Selected excerpt';
+        body.textContent = context.selectedText;
+        input.placeholder = 'Ask about the selected excerpt...';
+    }
+
+    buildChatContext() {
+        const context = this.pendingSelectionContext;
+        if (!context?.selectedText) return '';
+        const pageLabel = context.page ? `Page ${context.page}` : 'Page unknown';
+        return `${pageLabel}\n<selected_text>\n${context.selectedText}\n</selected_text>`;
+    }
+
     async sendMessage() {
         const input = document.getElementById('chat-input');
         const message = input?.value.trim();
 
         if (!message || this.isProcessing) return;
 
-        this.addUserMessage(message);
+        const contextText = this.buildChatContext();
+        const hasSelectionContext = !!contextText;
+        this.addUserMessage(hasSelectionContext ? `[Selected excerpt] ${message}` : message);
         input.value = '';
         input.style.height = '44px';
 
-        await this.processAiChat(message);
+        const success = await this.processAiChat(message, contextText);
+        if (success && hasSelectionContext) {
+            this.clearPendingSelectionContext();
+        }
     }
 
     addUserMessage(text) {
@@ -917,19 +1005,20 @@ class AIChatPanel {
         if (indicator) indicator.remove();
     }
 
-    async processAiChat(message) {
-        if (this.isProcessing) return;
+    async processAiChat(message, context = '') {
+        if (this.isProcessing) return false;
 
         this.isProcessing = true;
         this.showTypingIndicator();
 
         try {
-            const result = await API.aiChat(message);
+            const result = await API.aiChat(message, context);
 
             this.hideTypingIndicator();
 
             if (result.success) {
                 this.addAiMessage(result.response);
+                return true;
             } else {
                 this.addAiMessage(`Error: ${result.error || 'Failed to get response'}`);
             }
@@ -939,6 +1028,7 @@ class AIChatPanel {
         } finally {
             this.isProcessing = false;
         }
+        return false;
     }
 
     async processAiAction(action, selectedText) {
