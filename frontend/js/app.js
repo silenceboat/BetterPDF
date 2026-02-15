@@ -6,10 +6,11 @@
 
 class DeepReadApp {
     constructor() {
-        this.currentPanel = 'ai'; // 'ai' or 'notes'
+        this.currentPanel = 'ai'; // 'ai' or 'notes' or 'settings'
         this.pdfViewer = null;
         this.aiPanel = null;
         this.notesPanel = null;
+        this.settingsPanel = null;
         this.toastContainer = null;
         this.isResizingPanels = false;
         this.leftPanelStorageKey = 'deepread_left_panel_width';
@@ -47,6 +48,7 @@ class DeepReadApp {
         this.pdfViewer = new PDFViewer('pdf-panel-root');
         this.aiPanel = new AIChatPanel('panel-content');
         this.notesPanel = new NotesPanel('panel-content');
+        this.settingsPanel = new SettingsPanel('panel-content');
         this.setupPageSync();
         this.setupStatePersistenceSync();
         this.setupResizableLayout();
@@ -235,7 +237,7 @@ class DeepReadApp {
     // ==================== Panel Management ====================
 
     switchPanel(panel) {
-        if (panel !== 'ai' && panel !== 'notes') {
+        if (panel !== 'ai' && panel !== 'notes' && panel !== 'settings') {
             return;
         }
         this.currentPanel = panel;
@@ -260,6 +262,8 @@ class DeepReadApp {
                 const currentPage = this.pdfViewer?.getCurrentPage() || 1;
                 this.notesPanel.setActivePage(currentPage, { render: false, preserveActive: true });
                 this.notesPanel.render(content);
+            } else if (panel === 'settings') {
+                this.settingsPanel.render(content);
             }
         }
     }
@@ -714,33 +718,19 @@ class AIChatPanel {
         this.containerId = containerId;
         this.messages = [];
         this.isProcessing = false;
-        this.providerSettings = {
-            provider: 'openai',
-            model: 'gpt-4o-mini',
-            base_url: '',
-            api_key: ''
-        };
     }
 
     render(container) {
         container.innerHTML = `
-            <div class="ai-provider-settings" id="ai-provider-settings">
-                <div class="ai-provider-head">
-                    <div class="ai-provider-title">AI Provider</div>
-                    <div class="ai-provider-subtitle">Use your own OpenAI-compatible URL and API Key.</div>
+            <div class="ai-chat-head">
+                <div class="ai-chat-head-copy">
+                    <div class="ai-chat-eyebrow">Reading Copilot</div>
+                    <div class="ai-chat-title">AI Chat</div>
                 </div>
-                <div class="ai-provider-grid">
-                    <label class="ai-provider-field">
-                        <span>Provider URL</span>
-                        <input type="url" id="ai-provider-base-url" placeholder="https://api.openai.com/v1">
-                    </label>
-                    <label class="ai-provider-field">
-                        <span>API Key</span>
-                        <input type="password" id="ai-provider-api-key" placeholder="sk-...">
-                    </label>
-                    <button class="btn btn-sm btn-primary ai-provider-save" id="ai-provider-save-btn">Save Provider</button>
+                <div class="ai-chat-head-actions">
+                    <span class="ai-config-pill" id="ai-chat-config-pill">Checking provider...</span>
+                    <button class="btn btn-secondary btn-sm ai-chat-settings-link" id="open-ai-settings-btn">Open Settings</button>
                 </div>
-                <div class="ai-provider-feedback" id="ai-provider-feedback"></div>
             </div>
             <div class="quick-actions">
                 <button class="quick-action" data-action="full_summary">Full Summary</button>
@@ -767,22 +757,12 @@ class AIChatPanel {
         `;
 
         this.bindEvents();
-        this.loadProviderSettings();
+        this.refreshProviderStatus();
     }
 
     bindEvents() {
-        document.getElementById('ai-provider-save-btn')?.addEventListener('click', () => {
-            this.saveProviderSettings();
-        });
-        const providerUrlInput = document.getElementById('ai-provider-base-url');
-        const providerKeyInput = document.getElementById('ai-provider-api-key');
-        [providerUrlInput, providerKeyInput].forEach((input) => {
-            input?.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    this.saveProviderSettings();
-                }
-            });
+        document.getElementById('open-ai-settings-btn')?.addEventListener('click', () => {
+            window.app?.switchPanel('settings');
         });
 
         // Quick actions
@@ -814,71 +794,29 @@ class AIChatPanel {
         });
     }
 
-    async loadProviderSettings() {
-        const result = await API.getAiSettings();
-        if (!result.success) {
-            this.setProviderFeedback('Failed to load provider settings', true);
-            return;
-        }
-
-        this.providerSettings = {
-            ...this.providerSettings,
-            ...(result.settings || {})
-        };
-        const providerUrlInput = document.getElementById('ai-provider-base-url');
-        const providerKeyInput = document.getElementById('ai-provider-api-key');
-        if (providerUrlInput) {
-            providerUrlInput.value = this.providerSettings.base_url || '';
-        }
-        if (providerKeyInput) {
-            providerKeyInput.value = this.providerSettings.api_key || '';
-        }
-        this.setProviderFeedback(this.providerSettings.has_api_key ? 'Provider is configured.' : '', false);
+    setProviderStatus(message, state = 'warning') {
+        const statusEl = document.getElementById('ai-chat-config-pill');
+        if (!statusEl) return;
+        statusEl.textContent = message;
+        statusEl.classList.remove('configured', 'warning', 'error');
+        statusEl.classList.add(state);
     }
 
-    setProviderFeedback(message = '', isError = false) {
-        const feedback = document.getElementById('ai-provider-feedback');
-        if (!feedback) return;
-        feedback.textContent = message || '';
-        feedback.classList.toggle('error', !!(message && isError));
-        feedback.classList.toggle('success', !!(message && !isError));
-    }
-
-    async saveProviderSettings() {
-        const providerUrlInput = document.getElementById('ai-provider-base-url');
-        const providerKeyInput = document.getElementById('ai-provider-api-key');
-        const saveBtn = document.getElementById('ai-provider-save-btn');
-
-        const payload = {
-            provider: 'openai',
-            base_url: providerUrlInput?.value?.trim() || '',
-            api_key: providerKeyInput?.value?.trim() || '',
-            model: this.providerSettings?.model || 'gpt-4o-mini'
-        };
-
-        if (saveBtn) {
-            saveBtn.disabled = true;
-            saveBtn.textContent = 'Saving...';
-        }
-
+    async refreshProviderStatus() {
         try {
-            const result = await API.saveAiSettings(payload);
+            const result = await API.getAiSettings();
             if (!result.success) {
-                this.setProviderFeedback(result.error || 'Failed to save provider settings', true);
+                this.setProviderStatus('Provider status unavailable', 'error');
                 return;
             }
-            this.providerSettings = {
-                ...this.providerSettings,
-                ...(result.settings || payload)
-            };
-            this.setProviderFeedback('Provider settings saved. AI now uses your URL and API Key.', false);
-        } catch (error) {
-            this.setProviderFeedback(error?.message || 'Failed to save provider settings', true);
-        } finally {
-            if (saveBtn) {
-                saveBtn.disabled = false;
-                saveBtn.textContent = 'Save Provider';
+
+            if (result.settings?.has_api_key) {
+                this.setProviderStatus('Provider configured', 'configured');
+            } else {
+                this.setProviderStatus('API key missing', 'warning');
             }
+        } catch (error) {
+            this.setProviderStatus(error?.message || 'Provider status unavailable', 'error');
         }
     }
 
@@ -1036,6 +974,210 @@ class AIChatPanel {
             this.addAiMessage(`Error: ${error.message}`);
         } finally {
             this.isProcessing = false;
+        }
+    }
+}
+
+/**
+ * Settings Panel
+ */
+class SettingsPanel {
+    constructor(containerId) {
+        this.containerId = containerId;
+        this.providerSettings = {
+            provider: 'openai',
+            model: 'gpt-4o-mini',
+            base_url: '',
+            api_key: '',
+            has_api_key: false
+        };
+    }
+
+    render(container) {
+        container.innerHTML = `
+            <div class="settings-shell">
+                <section class="settings-hero">
+                    <div class="settings-eyebrow">Control Room</div>
+                    <h2 class="settings-title">AI Provider Settings</h2>
+                    <p class="settings-subtitle">Connect an OpenAI-compatible endpoint and keep AI chat lightweight.</p>
+                </section>
+
+                <section class="settings-card">
+                    <div class="settings-card-head">
+                        <div>
+                            <h3 class="settings-card-title">Provider Connection</h3>
+                            <p class="settings-card-desc">Set provider URL and API key used by AI actions in this app.</p>
+                        </div>
+                        <span class="settings-status-pill" id="settings-ai-status-pill">Loading...</span>
+                    </div>
+
+                    <div class="settings-fields">
+                        <label class="settings-field">
+                            <span class="settings-field-label">Provider URL</span>
+                            <input type="url" id="settings-ai-base-url" placeholder="https://api.openai.com/v1" spellcheck="false">
+                        </label>
+
+                        <label class="settings-field">
+                            <span class="settings-field-label">API Key</span>
+                            <div class="settings-input-wrap">
+                                <input type="password" id="settings-ai-api-key" placeholder="sk-..." spellcheck="false">
+                                <button type="button" class="settings-input-toggle" id="settings-ai-toggle-key">Show</button>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div class="settings-actions">
+                        <button class="btn btn-primary" id="settings-ai-save-btn">Save Provider</button>
+                        <button class="btn btn-secondary" id="settings-ai-clear-btn">Clear Form</button>
+                    </div>
+                    <div class="settings-feedback" id="settings-ai-feedback"></div>
+                </section>
+
+                <section class="settings-note">
+                    <p>Your settings are stored locally for this app instance. Keep your key private.</p>
+                </section>
+            </div>
+        `;
+
+        this.bindEvents();
+        this.loadProviderSettings();
+    }
+
+    bindEvents() {
+        document.getElementById('settings-ai-save-btn')?.addEventListener('click', () => {
+            this.saveProviderSettings();
+        });
+
+        document.getElementById('settings-ai-clear-btn')?.addEventListener('click', () => {
+            const urlInput = document.getElementById('settings-ai-base-url');
+            const keyInput = document.getElementById('settings-ai-api-key');
+            if (urlInput) urlInput.value = '';
+            if (keyInput) keyInput.value = '';
+            this.setStatus('Form cleared (not saved)', 'warning');
+            this.setFeedback('Click "Save Provider" to apply cleared values.', 'neutral');
+        });
+
+        document.getElementById('settings-ai-toggle-key')?.addEventListener('click', () => {
+            const keyInput = document.getElementById('settings-ai-api-key');
+            const toggle = document.getElementById('settings-ai-toggle-key');
+            if (!keyInput || !toggle) return;
+            const toText = keyInput.type === 'password';
+            keyInput.type = toText ? 'text' : 'password';
+            toggle.textContent = toText ? 'Hide' : 'Show';
+        });
+
+        const urlInput = document.getElementById('settings-ai-base-url');
+        const keyInput = document.getElementById('settings-ai-api-key');
+        [urlInput, keyInput].forEach((input) => {
+            input?.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.saveProviderSettings();
+                }
+            });
+        });
+    }
+
+    setStatus(message, state = 'warning') {
+        const status = document.getElementById('settings-ai-status-pill');
+        if (!status) return;
+        status.textContent = message || '';
+        status.classList.remove('configured', 'warning', 'error');
+        status.classList.add(state);
+    }
+
+    setFeedback(message = '', state = 'neutral') {
+        const feedback = document.getElementById('settings-ai-feedback');
+        if (!feedback) return;
+        feedback.textContent = message;
+        feedback.classList.remove('error', 'success', 'neutral');
+        feedback.classList.add(state);
+    }
+
+    async loadProviderSettings() {
+        try {
+            const result = await API.getAiSettings();
+            if (!result.success) {
+                this.setStatus('Failed to load', 'error');
+                this.setFeedback(result.error || 'Failed to load provider settings.', 'error');
+                return;
+            }
+
+            this.providerSettings = {
+                ...this.providerSettings,
+                ...(result.settings || {})
+            };
+
+            const urlInput = document.getElementById('settings-ai-base-url');
+            const keyInput = document.getElementById('settings-ai-api-key');
+            if (urlInput) urlInput.value = this.providerSettings.base_url || '';
+            if (keyInput) keyInput.value = this.providerSettings.api_key || '';
+
+            if (this.providerSettings.has_api_key) {
+                this.setStatus('Configured', 'configured');
+                this.setFeedback('Provider is ready. AI chat will use this connection.', 'success');
+            } else {
+                this.setStatus('Needs API key', 'warning');
+                this.setFeedback('Add an API key to enable OpenAI-compatible requests.', 'neutral');
+            }
+        } catch (error) {
+            this.setStatus('Failed to load', 'error');
+            this.setFeedback(error?.message || 'Failed to load provider settings.', 'error');
+        }
+    }
+
+    async saveProviderSettings() {
+        const urlInput = document.getElementById('settings-ai-base-url');
+        const keyInput = document.getElementById('settings-ai-api-key');
+        const saveBtn = document.getElementById('settings-ai-save-btn');
+        const clearBtn = document.getElementById('settings-ai-clear-btn');
+
+        const payload = {
+            provider: 'openai',
+            model: this.providerSettings?.model || 'gpt-4o-mini',
+            base_url: urlInput?.value?.trim() || '',
+            api_key: keyInput?.value?.trim() || ''
+        };
+
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+        }
+        if (clearBtn) {
+            clearBtn.disabled = true;
+        }
+
+        try {
+            const result = await API.saveAiSettings(payload);
+            if (!result.success) {
+                this.setStatus('Save failed', 'error');
+                this.setFeedback(result.error || 'Failed to save provider settings.', 'error');
+                return;
+            }
+
+            this.providerSettings = {
+                ...this.providerSettings,
+                ...(result.settings || payload)
+            };
+
+            const hasKey = !!this.providerSettings.has_api_key;
+            this.setStatus(hasKey ? 'Configured' : 'Needs API key', hasKey ? 'configured' : 'warning');
+            this.setFeedback(
+                hasKey ? 'Provider settings saved successfully.' : 'Saved, but no API key is configured yet.',
+                hasKey ? 'success' : 'neutral'
+            );
+            window.app?.showToast('AI provider settings saved', 'success', 1600);
+        } catch (error) {
+            this.setStatus('Save failed', 'error');
+            this.setFeedback(error?.message || 'Failed to save provider settings.', 'error');
+        } finally {
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save Provider';
+            }
+            if (clearBtn) {
+                clearBtn.disabled = false;
+            }
         }
     }
 }
