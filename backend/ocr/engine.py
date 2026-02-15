@@ -1,6 +1,7 @@
 import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 
 
@@ -16,10 +17,122 @@ class Engine:
         PaddleOCR 3.x defaults to HuggingFace; on many CN networks this is
         unreliable. Respect user-provided env var, otherwise fall back to BOS.
         """
-        if "PADDLE_PDX_MODEL_SOURCE" in os.environ:
-            return
         if os.name == "nt":
-            os.environ["PADDLE_PDX_MODEL_SOURCE"] = "BOS"
+            os.environ.setdefault("PADDLE_PDX_MODEL_SOURCE", "BOS")
+            self._configure_windows_cache_home()
+
+    @staticmethod
+    def _is_ascii_path(path_str: str) -> bool:
+        try:
+            path_str.encode("ascii")
+            return True
+        except UnicodeEncodeError:
+            return False
+
+    def _configure_windows_cache_home(self):
+        """
+        On Windows, Paddle's native loader may fail on non-ASCII cache paths.
+        Move PaddleX cache to an ASCII path unless user has set it explicitly.
+        """
+        if "PADDLE_PDX_CACHE_HOME" in os.environ:
+            return
+
+        home_dir = str(Path.home())
+        if self._is_ascii_path(home_dir):
+            return
+
+        candidates = []
+        public_dir = os.environ.get("PUBLIC")
+        if public_dir:
+            candidates.append(Path(public_dir) / "BetterPDF" / "paddlex_cache")
+        candidates.append(Path.cwd() / ".paddlex_cache")
+        candidates.append(Path(tempfile.gettempdir()) / "betterpdf_paddlex_cache")
+
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+                if not self._is_ascii_path(str(resolved)):
+                    continue
+                resolved.mkdir(parents=True, exist_ok=True)
+                os.environ["PADDLE_PDX_CACHE_HOME"] = str(resolved)
+                return
+            except Exception:
+                continue
+
+    def _get_model_cache_roots(self) -> list[Path]:
+        roots: list[Path] = []
+
+        pdx_cache_home = os.environ.get("PADDLE_PDX_CACHE_HOME")
+        if pdx_cache_home:
+            roots.append(Path(pdx_cache_home))
+
+        home_dir = Path.home()
+        roots.extend([
+            home_dir / ".paddlex",
+            home_dir / ".paddleocr",
+        ])
+
+        # De-duplicate while preserving order.
+        deduped: list[Path] = []
+        seen: set[str] = set()
+        for root in roots:
+            root_key = os.path.normcase(str(root))
+            if root_key in seen:
+                continue
+            seen.add(root_key)
+            deduped.append(root)
+        return deduped
+
+    def _is_within_allowed_roots(self, target_dir: Path, allowed_roots: list[Path]) -> bool:
+        try:
+            target_resolved = target_dir.resolve()
+        except Exception:
+            return False
+
+        target_norm = os.path.normcase(str(target_resolved))
+        for root in allowed_roots:
+            try:
+                root_resolved = root.resolve()
+            except Exception:
+                continue
+
+            root_norm = os.path.normcase(str(root_resolved))
+            try:
+                common = os.path.commonpath([target_norm, root_norm])
+            except ValueError:
+                continue
+            if common == root_norm:
+                return True
+        return False
+
+    def _safe_delete_model_dir(self, target_dir: Path, allowed_roots: list[Path]) -> bool:
+        if not target_dir.exists():
+            return False
+        if not self._is_within_allowed_roots(target_dir, allowed_roots):
+            return False
+        shutil.rmtree(target_dir, ignore_errors=True)
+        return True
+
+    def _cleanup_incomplete_model_cache(self):
+        """
+        PaddleX considers existing model directories as "downloaded" even if
+        key files are missing. Remove incomplete directories proactively.
+        """
+        allowed_roots = self._get_model_cache_roots()
+        model_names = [
+            "PP-OCRv5_mobile_det",
+            "PP-OCRv5_mobile_rec",
+        ]
+
+        for root in allowed_roots:
+            for model_name in model_names:
+                model_dir = root / "official_models" / model_name
+                if not model_dir.exists():
+                    continue
+                # The current PaddleOCR/PaddleX stack expects inference.json.
+                if (model_dir / "inference.json").exists():
+                    continue
+                self._safe_delete_model_dir(model_dir, allowed_roots)
 
     @property
     def ocr_model(self):
@@ -55,12 +168,14 @@ class Engine:
         """
         Create OCR model and recover from broken local model cache once.
         """
+        self._cleanup_incomplete_model_cache()
         try:
             return self._build_ocr_model()
         except Exception as first_error:
             if not self._recover_broken_model_cache(str(first_error)):
                 raise
             # Retry once after removing broken cache.
+            self._cleanup_incomplete_model_cache()
             return self._build_ocr_model()
 
     def _recover_broken_model_cache(self, error_message: str) -> bool:
@@ -71,34 +186,42 @@ class Engine:
         if "Cannot open file" not in error_message or "inference.json" not in error_message:
             return False
 
+        allowed_roots = self._get_model_cache_roots()
+        candidate_dirs: list[Path] = []
+
         # Works for both Windows and POSIX paths.
-        match = re.search(r"Cannot open file\s+(.+?inference\.json)", error_message, re.IGNORECASE)
-        if not match:
-            return False
+        match = re.search(
+            r"Cannot open file\s+(.+?inference\.json)",
+            error_message,
+            re.IGNORECASE,
+        )
+        if match:
+            broken_file = match.group(1).strip().strip("'\"")
+            candidate_dirs.append(Path(os.path.dirname(broken_file)))
 
-        broken_file = match.group(1).strip().strip("'\"")
-        broken_dir = Path(os.path.dirname(broken_file))
-        if not broken_dir.exists():
-            return False
+        # Fallback: if path parsing fails, locate model directory by model name.
+        model_match = re.search(
+            r"official_models[\\/]+([^\\/,\s]+)[\\/]+inference\.json",
+            error_message,
+            re.IGNORECASE,
+        )
+        if model_match:
+            model_name = model_match.group(1)
+            for root in allowed_roots:
+                candidate_dirs.append(root / "official_models" / model_name)
+                candidate_dirs.append(root / model_name)
 
-        home_dir = Path.home().resolve()
-        try:
-            resolved_dir = broken_dir.resolve()
-        except Exception:
-            return False
+        deleted_any = False
+        seen: set[str] = set()
+        for candidate in candidate_dirs:
+            key = os.path.normcase(str(candidate))
+            if key in seen:
+                continue
+            seen.add(key)
+            if self._safe_delete_model_dir(candidate, allowed_roots):
+                deleted_any = True
 
-        # Safety guard: only delete inside user cache locations.
-        allowed_roots = [
-            home_dir / ".paddlex",
-            home_dir / ".paddleocr",
-        ]
-        resolved_norm = os.path.normcase(str(resolved_dir))
-        allowed_norm = [os.path.normcase(str(root)) for root in allowed_roots]
-        if not any(resolved_norm.startswith(root) for root in allowed_norm):
-            return False
-
-        shutil.rmtree(resolved_dir, ignore_errors=True)
-        return True
+        return deleted_any
 
     def process_image(self, image_path) -> list:
         """
