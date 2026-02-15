@@ -67,7 +67,7 @@
     --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
 
     /* Layout */
-    --left-panel-width: 60%;
+    --left-panel-width: 68%;
 }
 
 /* Dark theme - Deep study mode */
@@ -152,6 +152,30 @@ html, body {
     font-size: 20px;
     transition: all var(--transition-fast);
     position: relative;
+}
+
+.sidebar-panel-btn {
+    display: none;
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+}
+
+.sidebar-panel-btn.is-context-visible {
+    display: flex;
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    animation: sidebarReveal var(--transition-normal) ease;
+}
+
+@keyframes sidebarReveal {
+    from {
+        opacity: 0;
+        transform: translateY(6px) scale(0.94);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
 }
 
 .sidebar-btn:hover {
@@ -406,19 +430,21 @@ html, body {
 }
 
 .btn-primary {
-    background: var(--ink-primary);
-    color: var(--bg-secondary);
+    background: linear-gradient(140deg, #d4a03c 0%, #e8bd6a 100%);
+    border: 1px solid #cb9532;
+    color: #2b1f07;
+    box-shadow: 0 8px 18px rgba(180, 130, 35, 0.2);
 }
 
 .btn-primary:hover {
-    background: var(--accent-primary);
-    color: var(--ink-primary);
+    background: linear-gradient(140deg, #e0ae4b 0%, #f0c97b 100%);
+    color: #241a06;
     transform: translateY(-1px);
     box-shadow: var(--shadow-md);
 }
 
 .btn-primary:active {
-    background: var(--accent-pressed);
+    background: linear-gradient(140deg, #c79335 0%, #dfb361 100%);
     transform: translateY(0);
 }
 
@@ -454,6 +480,20 @@ html, body {
     display: grid;
     grid-template-columns: minmax(460px, var(--left-panel-width)) 10px minmax(340px, 1fr);
     overflow: hidden;
+}
+
+body.pdf-focus-mode .header {
+    display: none;
+}
+
+body.pdf-focus-mode .content {
+    grid-template-columns: 1fr;
+    height: 100vh;
+}
+
+body.pdf-focus-mode .panel-splitter,
+body.pdf-focus-mode .right-panel {
+    display: none;
 }
 
 /* ==================== PDF Panel ==================== */
@@ -600,18 +640,42 @@ body.is-resizing-panels {
 
 .pdf-viewport {
     flex: 1;
-    display: flex;
+    display: block;
     align-items: flex-start;
-    justify-content: center;
+    justify-content: flex-start;
     overflow: auto;
-    padding: var(--space-lg);
+    padding: 0;
     position: relative;
+    scrollbar-gutter: stable both-edges;
+    scroll-behavior: smooth;
+    background:
+        linear-gradient(180deg, rgba(212, 160, 60, 0.04) 0%, transparent 42%),
+        var(--bg-primary);
+}
+
+.pdf-viewport::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+}
+
+.pdf-viewport::-webkit-scrollbar-thumb {
+    background: rgba(117, 102, 77, 0.35);
+    border-radius: 999px;
+    border: 2px solid rgba(255, 255, 255, 0.45);
+}
+
+.pdf-viewport::-webkit-scrollbar-thumb:hover {
+    background: rgba(117, 102, 77, 0.55);
+}
+
+.pdf-viewport::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.04);
 }
 
 .pdf-page-container {
     position: relative;
     box-shadow: var(--shadow-paper);
-    border-radius: var(--radius-sm);
+    border-radius: 0;
     overflow: hidden;
     background: white;
 }
@@ -633,6 +697,7 @@ body.is-resizing-panels {
     color: var(--ink-muted);
     gap: var(--space-lg);
     border: 2px dashed var(--border-color);
+    margin: 16px auto;
 }
 
 .pdf-placeholder-icon {

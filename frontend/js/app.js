@@ -23,6 +23,7 @@ class DeepReadApp {
         this.recentMenuToggleBtn = null;
         this.recentMenuEl = null;
         this.recentFilesRequestSeq = 0;
+        this.isPdfFocusMode = false;
 
         this.init();
     }
@@ -71,18 +72,18 @@ class DeepReadApp {
     }
 
     setupSidebar() {
-        const buttons = document.querySelectorAll('.sidebar-btn');
-        buttons.forEach(btn => {
+        const panelButtons = document.querySelectorAll('.sidebar-btn[data-panel]');
+        panelButtons.forEach(btn => {
             btn.addEventListener('click', () => {
                 const panel = btn.dataset.panel;
                 if (panel) {
                     this.switchPanel(panel);
                 }
-
-                // Update active state
-                buttons.forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
             });
+        });
+
+        document.querySelector('.sidebar-btn[data-action="toggle-pdf-focus"]')?.addEventListener('click', () => {
+            this.togglePdfFocusMode();
         });
     }
 
@@ -214,6 +215,11 @@ class DeepReadApp {
                         break;
                 }
             }
+
+            if (e.key === 'Escape' && this.isPdfFocusMode) {
+                e.preventDefault();
+                this.togglePdfFocusMode(false);
+            }
         });
     }
 
@@ -229,12 +235,16 @@ class DeepReadApp {
     // ==================== Panel Management ====================
 
     switchPanel(panel) {
+        if (panel !== 'ai' && panel !== 'notes') {
+            return;
+        }
         this.currentPanel = panel;
 
         // Update sidebar buttons
-        document.querySelectorAll('.sidebar-btn').forEach(btn => {
+        document.querySelectorAll('.sidebar-btn[data-panel]').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.panel === panel);
         });
+        this.updateSidebarContext(panel);
 
         // Update panel tabs
         document.querySelectorAll('.panel-tab').forEach(tab => {
@@ -252,6 +262,29 @@ class DeepReadApp {
                 this.notesPanel.render(content);
             }
         }
+    }
+
+    updateSidebarContext(panel = this.currentPanel) {
+        document.querySelectorAll('.sidebar-panel-btn').forEach((btn) => {
+            const visible = btn.dataset.panel === panel;
+            btn.classList.toggle('is-context-visible', visible);
+            btn.setAttribute('aria-hidden', visible ? 'false' : 'true');
+            btn.tabIndex = visible ? 0 : -1;
+        });
+    }
+
+    togglePdfFocusMode(forceState = null) {
+        const nextState = typeof forceState === 'boolean'
+            ? forceState
+            : !this.isPdfFocusMode;
+        this.isPdfFocusMode = nextState;
+        document.body.classList.toggle('pdf-focus-mode', nextState);
+        const focusBtn = document.querySelector('.sidebar-btn[data-action="toggle-pdf-focus"]');
+        if (focusBtn) {
+            focusBtn.classList.toggle('active', nextState);
+            focusBtn.setAttribute('aria-pressed', nextState ? 'true' : 'false');
+        }
+        window.dispatchEvent(new Event('deepread:layout-resized'));
     }
 
     // ==================== File Operations ====================

@@ -448,8 +448,8 @@ class PDFViewer {
     fitWidth() {
         const viewport = document.getElementById('pdf-viewport');
         if (viewport && this.pageDimensions) {
-            const padding = 80;
-            const availableWidth = viewport.clientWidth - padding;
+            const padding = 16;
+            const availableWidth = Math.max(120, viewport.clientWidth - padding);
             const newZoom = availableWidth / this.pageDimensions.width;
             this.autoFit = true;
             this.setZoom(Math.min(newZoom, this.maxZoom), { manual: false });
