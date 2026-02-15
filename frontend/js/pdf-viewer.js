@@ -24,6 +24,8 @@ class PDFViewer {
         this.selectionEnd = null;
         this.selectionRect = null;
         this.selectedText = '';
+        this.focusedNote = null;
+        this.noteFocusTimeout = null;
 
         // OCR state
         this.ocrEnabled = false;
@@ -101,12 +103,14 @@ class PDFViewer {
             this.ocrPageLoadingPage = null;
             this.ocrDocumentFullyProcessed = false;
             this.autoFit = true;
+            this.clearNoteFocus();
 
             this.renderViewer();
             await this.renderPage();
             this.fitWidth();
             this.updatePageInfo();
             this.updateOcrPageStatus();
+            this.emitPageChanged();
 
             return result;
         } else {
@@ -339,6 +343,10 @@ class PDFViewer {
                 } else {
                     this.clearOcrOverlay();
                 }
+
+                if (this.focusedNote?.page === this.currentPage && this.focusedNote.rectPdf) {
+                    this.renderNoteFocusHighlight(this.focusedNote.rectPdf);
+                }
             }
         } catch (error) {
             console.error('Failed to render page:', error);
@@ -366,11 +374,19 @@ class PDFViewer {
         }
 
         this.currentPage = pageNum;
+        this.clearNoteFocus();
         this.clearOcrOverlay();
         this.renderPage();
         this.updatePageInfo();
         this.clearSelection();
         this.updateOcrPageStatus();
+        this.emitPageChanged();
+    }
+
+    emitPageChanged() {
+        window.dispatchEvent(new CustomEvent('deepread:page-changed', {
+            detail: { page: this.currentPage }
+        }));
     }
 
     updatePageInfo() {
@@ -629,7 +645,8 @@ class PDFViewer {
             { label: 'Summarize', action: 'summarize' },
             { label: 'Translate', action: 'translate' },
             { label: 'Define', action: 'define' },
-            { label: 'Ask AI', action: 'ask' }
+            { label: 'Ask AI', action: 'ask' },
+            { label: 'Take a Note', action: 'take_note' }
         ];
 
         actions.forEach(({ label, action }) => {
@@ -664,10 +681,30 @@ class PDFViewer {
     handleSelectionAction(action) {
         if (!this.selectedText) return;
 
+        if (action === 'take_note') {
+            const payload = this.getSelectionPayload();
+            if (!payload) return;
+            window.app?.createNoteFromSelection(payload);
+            return;
+        }
+
         // Switch to AI panel and trigger action
         window.app?.switchPanel('ai');
         window.app?.aiPanel?.addUserMessage(`[${action}] ${this.selectedText.substring(0, 100)}...`);
         window.app?.aiPanel?.processAiAction(action, this.selectedText);
+    }
+
+    getSelectionPayload() {
+        if (!this.selectionRect || !this.selectedText?.trim()) return null;
+        const rectPdf = this.normalizeRect(this.screenToPdfCoords(this.selectionRect));
+        if (!rectPdf) return null;
+
+        return {
+            page: this.currentPage,
+            selectedText: this.selectedText.trim(),
+            rectPdf,
+            createdAt: new Date().toISOString()
+        };
     }
 
     clearSelection() {
@@ -718,6 +755,91 @@ class PDFViewer {
 
     getSelectedText() {
         return this.selectedText;
+    }
+
+    normalizeRect(rect) {
+        if (!rect) return null;
+        const x1 = Number(rect.x1);
+        const y1 = Number(rect.y1);
+        const x2 = Number(rect.x2);
+        const y2 = Number(rect.y2);
+        if (![x1, y1, x2, y2].every(Number.isFinite)) return null;
+        return {
+            x1: Math.min(x1, x2),
+            y1: Math.min(y1, y2),
+            x2: Math.max(x1, x2),
+            y2: Math.max(y1, y2)
+        };
+    }
+
+    pdfToScreenCoords(pdfRect) {
+        if (!this.pageDimensions) return null;
+
+        const img = document.getElementById('page-image');
+        if (!img?.clientWidth || !img?.clientHeight) return null;
+
+        const scaleX = img.clientWidth / this.pageDimensions.width;
+        const scaleY = img.clientHeight / this.pageDimensions.height;
+
+        const rect = this.normalizeRect(pdfRect);
+        if (!rect) return null;
+
+        return {
+            x1: rect.x1 * scaleX,
+            y1: rect.y1 * scaleY,
+            x2: rect.x2 * scaleX,
+            y2: rect.y2 * scaleY
+        };
+    }
+
+    focusNoteRect(rectPdf) {
+        const normalized = this.normalizeRect(rectPdf);
+        if (!normalized) return;
+
+        this.focusedNote = {
+            page: this.currentPage,
+            rectPdf: normalized
+        };
+
+        this.renderNoteFocusHighlight(normalized);
+
+        if (this.noteFocusTimeout) {
+            clearTimeout(this.noteFocusTimeout);
+        }
+        this.noteFocusTimeout = setTimeout(() => {
+            this.clearNoteFocus();
+        }, 2200);
+    }
+
+    renderNoteFocusHighlight(rectPdf) {
+        const layer = document.getElementById('selection-layer');
+        if (!layer) return;
+
+        const rect = this.pdfToScreenCoords(rectPdf);
+        if (!rect) return;
+
+        layer.querySelectorAll('.note-focus-highlight').forEach(el => el.remove());
+
+        const highlight = document.createElement('div');
+        highlight.className = 'note-focus-highlight';
+        highlight.style.left = `${rect.x1}px`;
+        highlight.style.top = `${rect.y1}px`;
+        highlight.style.width = `${rect.x2 - rect.x1}px`;
+        highlight.style.height = `${rect.y2 - rect.y1}px`;
+
+        layer.appendChild(highlight);
+    }
+
+    clearNoteFocus() {
+        if (this.noteFocusTimeout) {
+            clearTimeout(this.noteFocusTimeout);
+            this.noteFocusTimeout = null;
+        }
+        this.focusedNote = null;
+        const layer = document.getElementById('selection-layer');
+        if (layer) {
+            layer.querySelectorAll('.note-focus-highlight').forEach(el => el.remove());
+        }
     }
 
     // ==================== OCR ====================

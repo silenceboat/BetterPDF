@@ -1,7 +1,7 @@
 /**
  * DeepRead AI - Main Application
  *
- * Coordinates the PDF viewer, AI chat panel, and note editor.
+ * Coordinates the PDF viewer, AI chat panel, and page-linked notes.
  */
 
 class DeepReadApp {
@@ -13,6 +13,7 @@ class DeepReadApp {
         this.toastContainer = null;
         this.isResizingPanels = false;
         this.leftPanelStorageKey = 'deepread_left_panel_width';
+        this.pageNotes = new Map(); // page number -> note cards
 
         this.init();
     }
@@ -30,11 +31,13 @@ class DeepReadApp {
         this.createToastContainer();
         this.setupSidebar();
         this.setupHeader();
+        this.setupPanelTabs();
 
         // Initialize components
         this.pdfViewer = new PDFViewer('pdf-panel-root');
         this.aiPanel = new AIChatPanel('panel-content');
         this.notesPanel = new NotesPanel('panel-content');
+        this.setupPageSync();
         this.setupResizableLayout();
 
         // Show initial panel
@@ -81,6 +84,24 @@ class DeepReadApp {
         // Save button
         document.getElementById('save-btn')?.addEventListener('click', () => {
             this.saveCurrentNote();
+        });
+    }
+
+    setupPanelTabs() {
+        document.querySelectorAll('.panel-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const panel = tab.dataset.tab;
+                if (panel) {
+                    this.switchPanel(panel);
+                }
+            });
+        });
+    }
+
+    setupPageSync() {
+        window.addEventListener('deepread:page-changed', (event) => {
+            const page = Number(event?.detail?.page);
+            this.onPageChanged(page);
         });
     }
 
@@ -203,6 +224,8 @@ class DeepReadApp {
             if (panel === 'ai') {
                 this.aiPanel.render(content);
             } else if (panel === 'notes') {
+                const currentPage = this.pdfViewer?.getCurrentPage() || 1;
+                this.notesPanel.setActivePage(currentPage, { render: false, preserveActive: true });
                 this.notesPanel.render(content);
             }
         }
@@ -229,12 +252,84 @@ class DeepReadApp {
     }
 
     async saveCurrentNote() {
-        if (this.currentPanel === 'notes' && this.notesPanel) {
-            await this.notesPanel.saveNote();
-        } else {
-            // Switch to notes panel and save
+        if (this.currentPanel !== 'notes') {
             this.switchPanel('notes');
         }
+        await this.notesPanel?.saveNote();
+    }
+
+    normalizeRect(rect) {
+        if (!rect) return null;
+        const x1 = Number(rect.x1);
+        const y1 = Number(rect.y1);
+        const x2 = Number(rect.x2);
+        const y2 = Number(rect.y2);
+        if (![x1, y1, x2, y2].every(Number.isFinite)) return null;
+
+        return {
+            x1: Math.min(x1, x2),
+            y1: Math.min(y1, y2),
+            x2: Math.max(x1, x2),
+            y2: Math.max(y1, y2)
+        };
+    }
+
+    createPageNoteId() {
+        return `pn_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    }
+
+    createNoteFromSelection(payload) {
+        const page = Number(payload?.page);
+        const selectedText = payload?.selectedText?.trim() || '';
+        const rectPdf = this.normalizeRect(payload?.rectPdf);
+        if (!Number.isFinite(page) || page < 1 || !selectedText || !rectPdf) {
+            return;
+        }
+
+        const now = new Date().toISOString();
+        const note = {
+            id: this.createPageNoteId(),
+            page,
+            quote: selectedText,
+            note: '',
+            rectPdf,
+            createdAt: payload?.createdAt || now,
+            updatedAt: now
+        };
+
+        const pageNotes = this.pageNotes.get(page) || [];
+        pageNotes.unshift(note);
+        this.pageNotes.set(page, pageNotes);
+
+        this.notesPanel.setActivePage(page, { render: false, preserveActive: false });
+        this.switchPanel('notes');
+        this.notesPanel.setActiveNote(note.id, { focusPdf: true });
+        this.showToast(`Added note to page ${page}`, 'success', 1800);
+    }
+
+    onPageChanged(page) {
+        if (!Number.isFinite(page) || page < 1) return;
+        this.notesPanel?.setActivePage(page);
+        this.pdfViewer?.clearNoteFocus();
+    }
+
+    focusPageNote(note) {
+        if (!note) return;
+        const currentPage = this.pdfViewer?.getCurrentPage();
+        if (!currentPage || note.page !== currentPage) return;
+        this.pdfViewer?.focusNoteRect(note.rectPdf);
+    }
+
+    getPageNotesForPage(page) {
+        return this.pageNotes.get(page) || [];
+    }
+
+    getTotalPageNotes() {
+        let total = 0;
+        this.pageNotes.forEach((notes) => {
+            total += notes.length;
+        });
+        return total;
     }
 
     // ==================== Toast Notifications ====================
@@ -511,45 +606,26 @@ class AIChatPanel {
 class NotesPanel {
     constructor(containerId) {
         this.containerId = containerId;
-        this.noteId = '';
-        this.title = '';
-        this.content = '';
-        this.viewMode = 'edit'; // 'edit' or 'preview'
+        this.activePage = 1;
+        this.activeNoteId = '';
     }
 
     render(container) {
+        const notes = this.getActivePageNotes();
+        const noteCount = notes.length;
+        const countLabel = `${noteCount} ${noteCount === 1 ? 'note' : 'notes'}`;
+
         container.innerHTML = `
             <div class="notes-container">
-                <div class="notes-toolbar">
-                    <button class="btn btn-secondary btn-sm" id="new-note-btn">New Note</button>
-                    <button class="btn btn-primary btn-sm" id="save-note-btn">Save</button>
+                <div class="page-notes-header">
+                    <div class="page-notes-title-wrap">
+                        <div class="page-notes-eyebrow">Page Workspace</div>
+                        <h2 class="page-notes-title">Page ${this.activePage} Notes</h2>
+                    </div>
+                    <span class="page-notes-meta">${countLabel}</span>
                 </div>
-                <input type="text" class="note-title-input" id="note-title" placeholder="Note Title..." value="${this.title}">
-                <div class="editor-tabs">
-                    <button class="editor-tab ${this.viewMode === 'edit' ? 'active' : ''}" data-mode="edit">Edit</button>
-                    <button class="editor-tab ${this.viewMode === 'preview' ? 'active' : ''}" data-mode="preview">Preview</button>
-                </div>
-                <div class="editor-toolbar">
-                    <button class="toolbar-btn" data-action="bold" title="Bold (Ctrl+B)"><b>B</b></button>
-                    <button class="toolbar-btn" data-action="italic" title="Italic (Ctrl+I)"><i>I</i></button>
-                    <button class="toolbar-btn" data-action="heading" title="Heading">H</button>
-                    <span class="toolbar-divider"></span>
-                    <button class="toolbar-btn" data-action="list" title="List">•</button>
-                    <button class="toolbar-btn" data-action="link" title="Link">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-                        </svg>
-                    </button>
-                    <button class="toolbar-btn" data-action="pdf-link" title="PDF Link">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
-                            <polyline points="14 2 14 8 20 8"/>
-                        </svg>
-                    </button>
-                </div>
-                <div class="notes-editor" id="notes-editor-area">
-                    ${this.viewMode === 'edit' ? this.renderEditor() : this.renderPreview()}
+                <div class="page-notes-list" id="page-notes-list">
+                    ${noteCount ? notes.map((note, index) => this.renderNoteCard(note, index)).join('') : this.renderEmptyState()}
                 </div>
             </div>
         `;
@@ -557,152 +633,176 @@ class NotesPanel {
         this.bindEvents();
     }
 
-    renderEditor() {
-        return `<textarea class="note-content-editor" id="note-content" placeholder="Start writing your notes...">${this.content}</textarea>`;
-    }
-
-    renderPreview() {
-        return `<div class="note-preview" id="note-preview">${this.formatMarkdown(this.content)}</div>`;
-    }
-
     bindEvents() {
-        // View mode tabs
-        document.querySelectorAll('.editor-tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                this.viewMode = tab.dataset.mode;
-                this.saveCurrentContent();
-                this.render(document.getElementById('panel-content'));
+        document.querySelectorAll('.page-note-card').forEach(card => {
+            card.addEventListener('click', (event) => {
+                if (event.target.closest('.page-note-delete')) return;
+                this.setActiveNote(card.dataset.noteId, { focusPdf: true });
             });
         });
 
-        // Toolbar buttons
-        document.querySelectorAll('.toolbar-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                this.handleToolbarAction(btn.dataset.action);
+        document.querySelectorAll('.page-note-delete').forEach(btn => {
+            btn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.deleteNote(btn.dataset.noteId);
             });
         });
 
-        // New note button
-        document.getElementById('new-note-btn')?.addEventListener('click', () => {
-            this.newNote();
+        document.querySelectorAll('.page-note-input').forEach(textarea => {
+            const noteId = textarea.dataset.noteId;
+            textarea.addEventListener('focus', () => {
+                this.setActiveNote(noteId, { focusPdf: true });
+            });
+            textarea.addEventListener('input', (event) => {
+                const updatedAt = this.handleNoteInput(noteId, event.target.value);
+                const card = event.target.closest('.page-note-card');
+                const timeEl = card?.querySelector('.page-note-time');
+                if (timeEl && updatedAt) {
+                    timeEl.textContent = `Updated ${this.formatTime(updatedAt)}`;
+                }
+            });
         });
 
-        // Save button
-        document.getElementById('save-note-btn')?.addEventListener('click', () => {
-            this.saveNote();
-        });
-
-        // Auto-save title
-        document.getElementById('note-title')?.addEventListener('change', (e) => {
-            this.title = e.target.value;
-        });
+        this.updateActiveCardStyles();
     }
 
-    handleToolbarAction(action) {
-        const editor = document.getElementById('note-content');
-        if (!editor) return;
+    renderEmptyState() {
+        return `
+            <div class="page-note-empty">
+                <div class="page-note-empty-title">No notes on this page yet</div>
+                <div class="page-note-empty-hint">Drag on the PDF and choose "Take a Note" to create one.</div>
+            </div>
+        `;
+    }
 
-        const start = editor.selectionStart;
-        const end = editor.selectionEnd;
-        const text = editor.value;
-        const selected = text.substring(start, end);
+    renderNoteCard(note, index) {
+        const quote = this.escapeHtml(this.getQuotePreview(note.quote));
+        const noteText = this.escapeHtml(note.note || '');
+        const isActive = this.activeNoteId === note.id ? ' active' : '';
+        const label = `Excerpt ${String(index + 1).padStart(2, '0')}`;
+        const updated = this.formatTime(note.updatedAt || note.createdAt);
 
-        let replacement = '';
-        let cursorOffset = 0;
+        return `
+            <article class="page-note-card${isActive}" data-note-id="${this.escapeHtml(note.id)}">
+                <div class="page-note-card-head">
+                    <span class="page-note-chip">${label}</span>
+                    <button class="page-note-delete" data-note-id="${this.escapeHtml(note.id)}" title="Delete note" aria-label="Delete note">
+                        ×
+                    </button>
+                </div>
+                <blockquote class="page-note-quote">${quote}</blockquote>
+                <label class="page-note-label" for="note-input-${this.escapeHtml(note.id)}">Your note</label>
+                <textarea id="note-input-${this.escapeHtml(note.id)}" class="page-note-input" data-note-id="${this.escapeHtml(note.id)}" placeholder="Write your observation for this excerpt...">${noteText}</textarea>
+                <div class="page-note-time">Updated ${updated}</div>
+            </article>
+        `;
+    }
 
-        switch (action) {
-            case 'bold':
-                replacement = `**${selected || 'bold text'}**`;
-                cursorOffset = selected ? 0 : -2;
-                break;
-            case 'italic':
-                replacement = `*${selected || 'italic text'}*`;
-                cursorOffset = selected ? 0 : 1;
-                break;
-            case 'heading':
-                replacement = `\n## ${selected || 'Heading'}\n`;
-                break;
-            case 'list':
-                replacement = selected
-                    ? selected.split('\n').map(line => `- ${line}`).join('\n')
-                    : '- List item';
-                break;
-            case 'link':
-                replacement = `[${selected || 'link text'}](url)`;
-                cursorOffset = selected ? 0 : -1;
-                break;
-            case 'pdf-link':
-                const page = window.app?.pdfViewer?.getCurrentPage() || 1;
-                replacement = `[[pdf:doc#page=${page}]]`;
-                break;
+    setActivePage(page, options = {}) {
+        const { render = true, preserveActive = true } = options;
+        const nextPage = Number(page);
+        if (!Number.isFinite(nextPage) || nextPage < 1) return;
+
+        this.activePage = nextPage;
+        const notes = this.getActivePageNotes();
+        if (!preserveActive || !notes.some(note => note.id === this.activeNoteId)) {
+            this.activeNoteId = notes[0]?.id || '';
         }
 
-        editor.value = text.substring(0, start) + replacement + text.substring(end);
-        editor.focus();
-        editor.setSelectionRange(start + replacement.length + cursorOffset, start + replacement.length + cursorOffset);
-
-        this.content = editor.value;
+        if (render && window.app?.currentPanel === 'notes') {
+            this.render(document.getElementById('panel-content'));
+        }
     }
 
-    saveCurrentContent() {
-        const titleInput = document.getElementById('note-title');
-        const contentInput = document.getElementById('note-content');
+    setActiveNote(noteId, options = {}) {
+        const { focusPdf = true } = options;
+        if (!noteId) return;
 
-        if (titleInput) this.title = titleInput.value;
-        if (contentInput) this.content = contentInput.value;
+        const note = this.findActivePageNote(noteId);
+        if (!note) return;
+
+        this.activeNoteId = noteId;
+        this.updateActiveCardStyles();
+
+        if (focusPdf) {
+            window.app?.focusPageNote(note);
+        }
     }
 
-    newNote() {
-        this.noteId = '';
-        this.title = '';
-        this.content = '';
-        this.viewMode = 'edit';
-        this.render(document.getElementById('panel-content'));
+    updateActiveCardStyles() {
+        document.querySelectorAll('.page-note-card').forEach(card => {
+            card.classList.toggle('active', card.dataset.noteId === this.activeNoteId);
+        });
+    }
+
+    getQuotePreview(text) {
+        const condensed = String(text || '').replace(/\s+/g, ' ').trim();
+        if (condensed.length <= 260) return condensed;
+        return `${condensed.slice(0, 260)}...`;
+    }
+
+    findActivePageNote(noteId) {
+        return this.getActivePageNotes().find(note => note.id === noteId);
+    }
+
+    getActivePageNotes() {
+        return window.app?.getPageNotesForPage(this.activePage) || [];
+    }
+
+    handleNoteInput(noteId, text) {
+        const note = this.findActivePageNote(noteId);
+        if (!note) return '';
+        const updatedAt = new Date().toISOString();
+        note.note = text;
+        note.updatedAt = updatedAt;
+        return updatedAt;
+    }
+
+    deleteNote(noteId) {
+        const app = window.app;
+        if (!app || !noteId) return;
+
+        const notes = app.getPageNotesForPage(this.activePage);
+        const nextNotes = notes.filter(note => note.id !== noteId);
+        if (nextNotes.length) {
+            app.pageNotes.set(this.activePage, nextNotes);
+        } else {
+            app.pageNotes.delete(this.activePage);
+        }
+
+        if (this.activeNoteId === noteId) {
+            this.activeNoteId = nextNotes[0]?.id || '';
+        }
+
+        app.pdfViewer?.clearNoteFocus();
+        if (app.currentPanel === 'notes') {
+            this.render(document.getElementById('panel-content'));
+        }
     }
 
     async saveNote() {
-        this.saveCurrentContent();
-
-        try {
-            const result = await API.saveNote(this.noteId, this.title, this.content);
-
-            if (result.success) {
-                this.noteId = result.note_id;
-                window.app?.showToast('Note saved successfully', 'success');
-            } else {
-                window.app?.showToast(result.error || 'Failed to save note', 'error');
-            }
-        } catch (error) {
-            window.app?.showToast('Failed to save note', 'error');
+        const total = window.app?.getTotalPageNotes() || 0;
+        if (!total) {
+            window.app?.showToast('No page notes yet. Use "Take a Note" first.', 'warning');
+            return;
         }
+        window.app?.showToast(`Session notes ready: ${total} total notes across pages.`, 'info');
     }
 
-    formatMarkdown(text) {
-        if (!text) return '<p><em>Start typing to see preview...</em></p>';
+    formatTime(timestamp) {
+        if (!timestamp) return '';
+        const date = new Date(timestamp);
+        if (Number.isNaN(date.getTime())) return '';
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
 
-        return text
-            // PDF links: [[pdf:doc_id#page=N]]
-            .replace(/\[\[pdf:(.+?)#page=(\d+)\]\]/g, '<a href="#" class="pdf-link" data-page="$2">Page $2</a>')
-            // Headers
-            .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-            .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-            .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-            // Bold
-            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-            // Italic
-            .replace(/\*(.+?)\*/g, '<em>$1</em>')
-            // Code
-            .replace(/`(.+?)`/g, '<code>$1</code>')
-            // Links
-            .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank">$1</a>')
-            // Lists
-            .replace(/^- (.+)$/gm, '<li>$1</li>')
-            // Blockquotes
-            .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
-            // Paragraphs (must be last)
-            .split('\n\n')
-            .map(p => p.trim() ? `<p>${p}</p>` : '')
-            .join('');
+    escapeHtml(text) {
+        return String(text || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 }
 
