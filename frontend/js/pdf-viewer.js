@@ -30,6 +30,8 @@ class PDFViewer {
         this.ocrMode = 'page'; // 'page' or 'document'
         this.ocrResults = {};  // page_num -> lines array
         this.ocrLoading = false;
+        this.ocrPageLoadingPage = null;
+        this.ocrDocumentFullyProcessed = false;
         this.ocrProgressTimer = null;
         this.autoFit = true;
         this._layoutResizeRaf = null;
@@ -96,12 +98,15 @@ class PDFViewer {
             this.zoom = 1.0;
             this.ocrResults = {};
             this.ocrEnabled = false;
+            this.ocrPageLoadingPage = null;
+            this.ocrDocumentFullyProcessed = false;
             this.autoFit = true;
 
             this.renderViewer();
             await this.renderPage();
             this.fitWidth();
             this.updatePageInfo();
+            this.updateOcrPageStatus();
 
             return result;
         } else {
@@ -175,6 +180,7 @@ class PDFViewer {
                         </button>
                     </div>
                 </div>
+                <div class="ocr-page-status idle" id="ocr-page-status">OCR: Not Processed</div>
                 <div class="ocr-progress" id="ocr-progress" hidden>
                     <div class="ocr-progress-row">
                         <span class="ocr-progress-label" id="ocr-progress-label">OCR</span>
@@ -194,6 +200,7 @@ class PDFViewer {
         `;
 
         this.bindEvents();
+        this.updateOcrPageStatus();
     }
 
     bindEvents() {
@@ -329,12 +336,15 @@ class PDFViewer {
                 // Re-render OCR overlay if enabled (handles zoom changes)
                 if (this.ocrEnabled && this.ocrResults[this.currentPage]) {
                     this.renderOcrOverlay(this.ocrResults[this.currentPage]);
+                } else {
+                    this.clearOcrOverlay();
                 }
             }
         } catch (error) {
             console.error('Failed to render page:', error);
         } finally {
             this.isLoading = false;
+            this.updateOcrPageStatus();
         }
     }
 
@@ -356,13 +366,11 @@ class PDFViewer {
         }
 
         this.currentPage = pageNum;
+        this.clearOcrOverlay();
         this.renderPage();
         this.updatePageInfo();
         this.clearSelection();
-
-        if (this.ocrEnabled) {
-            this.loadOcrForCurrentPage();
-        }
+        this.updateOcrPageStatus();
     }
 
     updatePageInfo() {
@@ -435,20 +443,16 @@ class PDFViewer {
         // Only left click
         if (e.button !== 0) return;
 
-        // When OCR is active, let native text selection handle it
-        if (this.ocrEnabled) return;
-
         const pageContainer = document.getElementById('page-container');
         const rect = pageContainer.getBoundingClientRect();
 
+        this.clearSelection();
         this.isSelecting = true;
         this.selectionStart = {
             x: e.clientX - rect.left,
             y: e.clientY - rect.top
         };
         this.selectionEnd = { ...this.selectionStart };
-
-        this.clearSelection();
     }
 
     onSelectionMove(e) {
@@ -465,7 +469,7 @@ class PDFViewer {
         this.updateSelectionOverlay();
     }
 
-    onSelectionEnd(e) {
+    async onSelectionEnd(e) {
         if (!this.isSelecting) return;
 
         this.isSelecting = false;
@@ -475,8 +479,14 @@ class PDFViewer {
 
         if (rect && this.isValidSelection(rect)) {
             this.selectionRect = rect;
-            this.extractSelectedText();
-            this.showSelectionMenu(e.clientX, e.clientY);
+            const extracted = this.ocrEnabled
+                ? this.extractSelectedOcrText(rect)
+                : await this.extractSelectedText();
+            if (extracted) {
+                this.showSelectionMenu(e.clientX, e.clientY);
+            } else {
+                this.clearSelection();
+            }
         } else {
             this.clearSelection();
         }
@@ -521,7 +531,7 @@ class PDFViewer {
     }
 
     async extractSelectedText() {
-        if (!this.selectionRect) return;
+        if (!this.selectionRect) return false;
 
         // Convert screen coordinates to PDF coordinates
         const pdfRect = this.screenToPdfCoords(this.selectionRect);
@@ -534,6 +544,60 @@ class PDFViewer {
         } catch (error) {
             console.error('Failed to extract text:', error);
         }
+        return !!this.selectedText?.trim();
+    }
+
+    extractSelectedOcrText(screenRect) {
+        const lines = this.getOcrLinesInSelectionRect(screenRect);
+        const text = lines
+            .map(item => item.line.text || '')
+            .map(textLine => textLine.trim())
+            .filter(Boolean)
+            .join('\n');
+        this.selectedText = text;
+        return !!text;
+    }
+
+    getOcrLinesInSelectionRect(screenRect) {
+        const lines = this.ocrResults[this.currentPage] || [];
+        if (!lines.length || !this.pageDimensions) return [];
+
+        const img = document.getElementById('page-image');
+        if (!img) return [];
+
+        const imgWidth = img.clientWidth;
+        const imgHeight = img.clientHeight;
+        if (!imgWidth || !imgHeight) return [];
+
+        const pageWidth = this.pageDimensions.width;
+        const pageHeight = this.pageDimensions.height;
+        const scaleX = imgWidth / pageWidth;
+        const scaleY = imgHeight / pageHeight;
+
+        const hits = [];
+        for (const line of lines) {
+            const lineRect = {
+                x1: line.x * scaleX,
+                y1: (pageHeight - line.y - line.height) * scaleY,
+                x2: (line.x + line.width) * scaleX,
+                y2: (pageHeight - line.y) * scaleY
+            };
+            if (this.rectanglesIntersect(screenRect, lineRect)) {
+                hits.push({ line, rect: lineRect });
+            }
+        }
+
+        hits.sort((a, b) => {
+            const deltaY = a.rect.y1 - b.rect.y1;
+            if (Math.abs(deltaY) > 2) return deltaY;
+            return a.rect.x1 - b.rect.x1;
+        });
+
+        return hits;
+    }
+
+    rectanglesIntersect(a, b) {
+        return a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
     }
 
     screenToPdfCoords(screenRect) {
@@ -620,6 +684,28 @@ class PDFViewer {
             const menu = layer.querySelector('#selection-menu');
             if (menu) menu.remove();
         }
+    }
+
+    updateOcrPageStatus() {
+        const statusEl = document.getElementById('ocr-page-status');
+        if (!statusEl) return;
+
+        const isProcessing = this.ocrPageLoadingPage === this.currentPage;
+        const isProcessed = this.ocrDocumentFullyProcessed || !!this.ocrResults[this.currentPage];
+
+        statusEl.classList.remove('idle', 'processing', 'processed');
+        if (isProcessing) {
+            statusEl.textContent = 'OCR: Processing...';
+            statusEl.classList.add('processing');
+            return;
+        }
+        if (isProcessed) {
+            statusEl.textContent = 'OCR: Processed';
+            statusEl.classList.add('processed');
+            return;
+        }
+        statusEl.textContent = 'OCR: Not Processed';
+        statusEl.classList.add('idle');
     }
 
     getCurrentPage() {
@@ -709,6 +795,8 @@ class PDFViewer {
             layer.classList.add('ocr-active');
         }
 
+        this.updateOcrPageStatus();
+
         if (mode === 'document') {
             this.loadOcrForDocument();
         } else {
@@ -732,6 +820,7 @@ class PDFViewer {
         }
         this.clearOcrOverlay();
         this.hideOcrProgress();
+        this.updateOcrPageStatus();
     }
 
     async loadOcrForCurrentPage() {
@@ -740,11 +829,14 @@ class PDFViewer {
         // Use cached result if available
         if (this.ocrResults[this.currentPage]) {
             this.renderOcrOverlay(this.ocrResults[this.currentPage]);
+            this.updateOcrPageStatus();
             return;
         }
 
         if (this.ocrLoading) return;
         this.ocrLoading = true;
+        this.ocrPageLoadingPage = this.currentPage;
+        this.updateOcrPageStatus();
 
         this.showOcrProgress('OCR This Page', 'Processing...', true);
         window.app?.showToast('Running OCR for current page...', 'info');
@@ -770,6 +862,8 @@ class PDFViewer {
             this.hideOcrProgress();
         } finally {
             this.ocrLoading = false;
+            this.ocrPageLoadingPage = null;
+            this.updateOcrPageStatus();
             setTimeout(() => this.hideOcrProgress(), 1200);
         }
     }
@@ -787,6 +881,11 @@ class PDFViewer {
                 window.app?.showToast(`OCR failed: ${startResult.error}`, 'error', 6000);
                 this.disableOcr();
                 return;
+            }
+
+            if (startResult.cached) {
+                this.ocrDocumentFullyProcessed = true;
+                this.updateOcrPageStatus();
             }
 
             const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -817,6 +916,7 @@ class PDFViewer {
                 }
 
                 if (progress.status === 'completed') {
+                    this.ocrDocumentFullyProcessed = true;
                     const currentResult = await API.ocrPage(this.currentPage);
                     if (currentResult.success) {
                         this.ocrResults[this.currentPage] = currentResult.lines;
@@ -829,6 +929,7 @@ class PDFViewer {
                         'success',
                         4500
                     );
+                    this.updateOcrPageStatus();
                     break;
                 }
 
@@ -855,6 +956,7 @@ class PDFViewer {
             this.disableOcr();
         } finally {
             this.ocrLoading = false;
+            this.updateOcrPageStatus();
             setTimeout(() => this.hideOcrProgress(), 1500);
         }
     }

@@ -616,10 +616,10 @@ body.is-resizing-panels {
     overflow: hidden;
     white-space: nowrap;
     line-height: 1;
-    pointer-events: auto;
-    user-select: text;
-    -webkit-user-select: text;
-    cursor: text;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
     font-family: sans-serif;
 }
 
@@ -632,6 +632,37 @@ body.is-resizing-panels {
 .ocr-entry {
     position: relative;
     margin-left: var(--space-sm);
+}
+
+.ocr-page-status {
+    margin-left: 10px;
+    padding: 6px 10px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    font-size: 11px;
+    line-height: 1;
+    font-family: var(--font-mono);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    background: var(--bg-elevated);
+    color: var(--ink-muted);
+}
+
+.ocr-page-status.idle {
+    border-color: var(--border-color);
+    color: var(--ink-muted);
+}
+
+.ocr-page-status.processing {
+    border-color: var(--accent-primary);
+    color: var(--ink-primary);
+    background: var(--accent-subtle);
+}
+
+.ocr-page-status.processed {
+    border-color: rgba(68, 149, 108, 0.35);
+    color: #74d8a7;
+    background: rgba(48, 104, 78, 0.2);
 }
 
 .ocr-toggle-btn {
@@ -790,11 +821,12 @@ body.is-resizing-panels {
     100% { transform: translateX(250%); }
 }
 
-/* OCR active: allow text selection on the overlay layer */
+/* OCR active: use rectangle drag selection on the overlay layer */
 .selection-layer.ocr-active {
     pointer-events: auto;
-    user-select: text;
-    -webkit-user-select: text;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: crosshair;
 }
 
 /* ==================== Right Panel ==================== */
