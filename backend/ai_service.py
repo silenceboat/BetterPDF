@@ -1,35 +1,27 @@
-"""
-AI Service for DeepRead AI.
+"""AI service with configurable provider endpoint and credentials."""
 
-Provides chat completion and AI actions using OpenAI API or Ollama.
-"""
+from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Any, Optional
 
 
 class AIService:
-    """
-    AI service for chat and document analysis.
+    """AI service for chat and document analysis."""
 
-    Supports:
-    - OpenAI API (GPT-4, GPT-4o-mini, etc.)
-    - Ollama (local models)
-    """
-
-    def __init__(self, provider: str = "openai", model: Optional[str] = None):
-        """
-        Initialize the AI service.
-
-        Args:
-            provider: "openai" or "ollama"
-            model: Model name (defaults to provider-specific default)
-        """
-        self.provider = provider
+    def __init__(
+        self,
+        provider: str = "openai",
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ):
+        self.provider = provider if provider in {"openai", "ollama"} else "openai"
         self.model = model or self._get_default_model()
+        self.base_url = self._normalize_base_url(base_url)
+        self.api_key = str(api_key or "").strip()
         self.client = None
         self._history: list[dict] = []
-
         self._init_client()
 
     def _get_default_model(self) -> str:
@@ -40,9 +32,43 @@ class AIService:
         }
         return defaults.get(self.provider, "gpt-4o-mini")
 
+    @staticmethod
+    def _normalize_base_url(base_url: Optional[str]) -> str:
+        return str(base_url or "").strip().rstrip("/")
+
     def _init_client(self):
-        """Initialize the API client lazily on first use."""
+        """Mark client for lazy re-initialization."""
         self._client_initialized = False
+        self.client = None
+
+    def configure(
+        self,
+        *,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ):
+        """Update runtime AI configuration and reset lazy client."""
+        if provider is not None:
+            self.provider = provider if provider in {"openai", "ollama"} else "openai"
+        if model is not None:
+            self.model = str(model or "").strip() or self._get_default_model()
+        if base_url is not None:
+            self.base_url = self._normalize_base_url(base_url)
+        if api_key is not None:
+            self.api_key = str(api_key or "").strip()
+        self._init_client()
+
+    def get_config(self) -> dict[str, Any]:
+        """Return active AI settings (includes key for local UI persistence)."""
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "base_url": self.base_url,
+            "api_key": self.api_key,
+            "has_api_key": bool(self.api_key or os.getenv("OPENAI_API_KEY")),
+        }
 
     def _ensure_client(self):
         """Ensure the API client is initialized (lazy)."""
@@ -53,9 +79,12 @@ class AIService:
         if self.provider == "openai":
             try:
                 import openai
-                api_key = os.getenv("OPENAI_API_KEY")
+                api_key = self.api_key or os.getenv("OPENAI_API_KEY", "")
                 if api_key:
-                    self.client = openai.OpenAI(api_key=api_key)
+                    kwargs: dict[str, Any] = {"api_key": api_key}
+                    if self.base_url:
+                        kwargs["base_url"] = self.base_url
+                    self.client = openai.OpenAI(**kwargs)
             except ImportError:
                 pass
         elif self.provider == "ollama":
@@ -119,20 +148,26 @@ class AIService:
         try:
             # Convert messages to Ollama format
             prompt = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
+            base_url = self.base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            endpoint = base_url.rstrip("/") + "/api/generate"
+            headers: dict[str, str] = {}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
 
             response = requests.post(
-                "http://localhost:11434/api/generate",
+                endpoint,
                 json={
                     "model": self.model,
                     "prompt": prompt,
                     "stream": False,
                 },
+                headers=headers or None,
                 timeout=120,
             )
             response.raise_for_status()
             return response.json()["response"]
         except Exception as e:
-            return f"Error connecting to Ollama: {str(e)}\nMake sure Ollama is running on localhost:11434"
+            return f"Error connecting to Ollama: {str(e)}\nMake sure provider URL is reachable."
 
     def _mock_response(self, message: str, context: Optional[str]) -> str:
         """Generate a mock response when no AI provider is available."""
@@ -149,9 +184,10 @@ class AIService:
             return (
                 f"**Response to: \"{message[:50]}...\"**\n\n"
                 f"This is a mock response. To get real AI responses, please:\n\n"
-                f"1. Set your `OPENAI_API_KEY` environment variable for OpenAI, or\n"
-                f"2. Install and run [Ollama](https://ollama.com) locally\n\n"
-                f"The AI service will automatically detect and use the available provider."
+                f"1. Set Provider URL and API Key in AI settings, or\n"
+                f"2. Set `OPENAI_API_KEY` environment variable, or\n"
+                f"3. Install and run [Ollama](https://ollama.com) locally\n\n"
+                f"The app supports OpenAI-compatible provider URLs."
             )
 
     def ai_action(self, action: str, selected_text: str) -> str:

@@ -84,6 +84,15 @@ class PersistenceStore:
                 """
             )
             cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    setting_key TEXT PRIMARY KEY,
+                    setting_value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_page_notes_file_page ON page_notes(file_path, page)"
             )
             cur.execute(
@@ -361,3 +370,62 @@ class PersistenceStore:
                 (path, nid),
             )
             self._conn.commit()
+
+    def save_ai_settings(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        provider: str = "openai",
+        model: str = "gpt-4o-mini",
+    ):
+        payload = {
+            "base_url": str(base_url or "").strip().rstrip("/"),
+            "api_key": str(api_key or "").strip(),
+            "provider": "ollama" if provider == "ollama" else "openai",
+            "model": str(model or "").strip() or "gpt-4o-mini",
+        }
+        now = _utc_now_iso()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO app_settings (setting_key, setting_value, updated_at)
+                VALUES ('ai_settings', ?, ?)
+                ON CONFLICT(setting_key) DO UPDATE SET
+                    setting_value = excluded.setting_value,
+                    updated_at = excluded.updated_at
+                """,
+                (json.dumps(payload, separators=(",", ":")), now),
+            )
+            self._conn.commit()
+
+    def get_ai_settings(self) -> dict[str, Any]:
+        default_settings = {
+            "base_url": "",
+            "api_key": "",
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+        }
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT setting_value
+                FROM app_settings
+                WHERE setting_key = 'ai_settings'
+                """,
+            ).fetchone()
+
+        if not row:
+            return default_settings
+
+        try:
+            payload = json.loads(row["setting_value"] or "{}")
+        except Exception:
+            payload = {}
+
+        return {
+            "base_url": str(payload.get("base_url") or "").strip().rstrip("/"),
+            "api_key": str(payload.get("api_key") or "").strip(),
+            "provider": "ollama" if payload.get("provider") == "ollama" else "openai",
+            "model": str(payload.get("model") or "").strip() or "gpt-4o-mini",
+        }

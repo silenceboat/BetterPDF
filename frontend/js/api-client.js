@@ -71,6 +71,26 @@ const API = {
                 success: true,
                 response: 'Mock AI action result for: ' + args[0]
             }),
+            get_ai_settings: () => ({
+                success: true,
+                settings: {
+                    provider: 'openai',
+                    model: 'gpt-4o-mini',
+                    base_url: '',
+                    api_key: '',
+                    has_api_key: false
+                }
+            }),
+            save_ai_settings: () => ({
+                success: true,
+                settings: {
+                    provider: 'openai',
+                    model: args[0]?.model || 'gpt-4o-mini',
+                    base_url: args[0]?.base_url || '',
+                    api_key: args[0]?.api_key || '',
+                    has_api_key: !!(args[0]?.api_key)
+                }
+            }),
             ocr_page: () => ({
                 success: true,
                 lines: [
@@ -259,6 +279,23 @@ const API = {
      */
     async aiChat(message, context = '') {
         return this.call('ai_chat', message, context);
+    },
+
+    /**
+     * Read persisted AI provider settings
+     * @returns {Promise<{success: boolean, settings?: Object, error?: string}>}
+     */
+    async getAiSettings() {
+        return this.call('get_ai_settings');
+    },
+
+    /**
+     * Persist and apply AI provider settings
+     * @param {Object} settings - {provider, model, base_url, api_key}
+     * @returns {Promise<{success: boolean, settings?: Object, error?: string}>}
+     */
+    async saveAiSettings(settings) {
+        return this.call('save_ai_settings', settings);
     },
 
     /**

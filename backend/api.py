@@ -52,6 +52,13 @@ class DeepReadAPI:
         self._persistence_error: Optional[str] = None
         try:
             self._persistence = PersistenceStore(db_path=os.getenv("DEEPREAD_DB_PATH"))
+            stored_ai = self._persistence.get_ai_settings()
+            self.ai_service.configure(
+                provider=stored_ai.get("provider"),
+                model=stored_ai.get("model"),
+                base_url=stored_ai.get("base_url"),
+                api_key=stored_ai.get("api_key"),
+            )
         except Exception as e:
             self._persistence_error = str(e)
 
@@ -595,6 +602,54 @@ class DeepReadAPI:
                 "success": False,
                 "error": str(e),
             }
+
+    def get_ai_settings(self) -> dict:
+        """Return active AI provider settings."""
+        try:
+            if self._persistence:
+                settings = self._persistence.get_ai_settings()
+                self.ai_service.configure(
+                    provider=settings.get("provider"),
+                    model=settings.get("model"),
+                    base_url=settings.get("base_url"),
+                    api_key=settings.get("api_key"),
+                )
+            settings = self.ai_service.get_config()
+            return {"success": True, "settings": settings}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def save_ai_settings(self, settings: Optional[dict] = None) -> dict:
+        """Persist and apply AI provider settings."""
+        try:
+            payload = settings or {}
+            provider = payload.get("provider") or "openai"
+            base_url = str(payload.get("base_url") or payload.get("baseUrl") or "").strip().rstrip("/")
+            api_key = str(payload.get("api_key") or payload.get("apiKey") or "").strip()
+            model = str(payload.get("model") or "").strip() or None
+
+            if provider == "openai" and not api_key and not os.getenv("OPENAI_API_KEY"):
+                return {"success": False, "error": "API Key is required for OpenAI-compatible providers"}
+
+            self.ai_service.configure(
+                provider=provider,
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
+            )
+
+            if self._persistence:
+                current = self.ai_service.get_config()
+                self._persistence.save_ai_settings(
+                    base_url=current.get("base_url", ""),
+                    api_key=current.get("api_key", ""),
+                    provider=current.get("provider", "openai"),
+                    model=current.get("model", "gpt-4o-mini"),
+                )
+
+            return {"success": True, "settings": self.ai_service.get_config()}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     def ai_action(self, action: str, selected_text: str) -> dict:
         """

@@ -120,6 +120,32 @@ def test_page_notes_persist_after_restart(monkeypatch, tmp_path):
     assert reopened["page_notes"][0]["note"] == "my note"
 
 
+def test_ai_settings_persist_after_restart(monkeypatch, tmp_path):
+    db_path = tmp_path / "deepread.db"
+    api = _make_api(monkeypatch, db_path)
+
+    save_result = api.save_ai_settings(
+        {
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "base_url": "https://example.com/v1/",
+            "api_key": "sk-test-key",
+        }
+    )
+    assert save_result["success"]
+    assert save_result["settings"]["base_url"] == "https://example.com/v1"
+    assert save_result["settings"]["api_key"] == "sk-test-key"
+    if api._persistence:
+        api._persistence.close()
+
+    api2 = _make_api(monkeypatch, db_path)
+    loaded = api2.get_ai_settings()
+    assert loaded["success"]
+    assert loaded["settings"]["provider"] == "openai"
+    assert loaded["settings"]["base_url"] == "https://example.com/v1"
+    assert loaded["settings"]["api_key"] == "sk-test-key"
+
+
 def test_delete_page_note(monkeypatch, tmp_path):
     db_path = tmp_path / "deepread.db"
     file_path = tmp_path / "delete.pdf"
@@ -196,3 +222,25 @@ def test_persistence_migrates_legacy_documents_schema(tmp_path):
     assert state["last_zoom"] == 1.5
     assert state["ocr_enabled"] is True
     assert state["ocr_mode"] == "document"
+
+
+def test_persistence_ai_settings_roundtrip(tmp_path):
+    db_path = tmp_path / "settings.db"
+    store = PersistenceStore(db_path=str(db_path))
+
+    defaults = store.get_ai_settings()
+    assert defaults["provider"] == "openai"
+    assert defaults["base_url"] == ""
+    assert defaults["api_key"] == ""
+
+    store.save_ai_settings(
+        provider="openai",
+        model="gpt-4o-mini",
+        base_url="https://proxy.example.com/v1/",
+        api_key="sk-local",
+    )
+    loaded = store.get_ai_settings()
+    assert loaded["provider"] == "openai"
+    assert loaded["model"] == "gpt-4o-mini"
+    assert loaded["base_url"] == "https://proxy.example.com/v1"
+    assert loaded["api_key"] == "sk-local"
