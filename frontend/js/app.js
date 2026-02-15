@@ -12,6 +12,7 @@ class DeepReadApp {
         this.notesPanel = null;
         this.settingsPanel = null;
         this.toastContainer = null;
+        this.topToastContainer = null;
         this.isResizingPanels = false;
         this.leftPanelStorageKey = 'deepread_left_panel_width';
         this.pageNotes = new Map(); // page number -> note cards
@@ -71,6 +72,11 @@ class DeepReadApp {
         this.toastContainer.className = 'toast-container';
         this.toastContainer.id = 'toast-container';
         document.body.appendChild(this.toastContainer);
+
+        this.topToastContainer = document.createElement('div');
+        this.topToastContainer.className = 'toast-container toast-container-top';
+        this.topToastContainer.id = 'toast-container-top';
+        document.body.appendChild(this.topToastContainer);
     }
 
     setupSidebar() {
@@ -650,7 +656,12 @@ class DeepReadApp {
             rectPdf,
             createdAt: payload?.createdAt || new Date().toISOString()
         });
-        this.showToast(`Selection from page ${page} is attached. Ask your question in AI Chat.`, 'info', 2200);
+        this.showToast(
+            `Selection from page ${page} is attached. Ask your question in AI Chat.`,
+            'info',
+            1800,
+            { position: 'top-right' }
+        );
     }
 
     onPageChanged(page) {
@@ -689,7 +700,13 @@ class DeepReadApp {
 
     // ==================== Toast Notifications ====================
 
-    showToast(message, type = 'info', duration = 3000) {
+    showToast(message, type = 'info', duration = 3000, options = {}) {
+        const position = options?.position === 'top-right' ? 'top-right' : 'bottom-right';
+        const mountNode = position === 'top-right'
+            ? (this.topToastContainer || this.toastContainer)
+            : this.toastContainer;
+        if (!mountNode) return null;
+
         const toast = document.createElement('div');
         toast.className = `toast ${type}`;
 
@@ -713,7 +730,7 @@ class DeepReadApp {
             toast.remove();
         });
 
-        this.toastContainer.appendChild(toast);
+        mountNode.appendChild(toast);
 
         // Auto remove
         if (duration > 0) {
