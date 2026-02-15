@@ -48,10 +48,10 @@ class DeepReadAPI:
         }
 
         # Local persistence (session state, recent files, page notes)
-        self.persistence: Optional[PersistenceStore] = None
+        self._persistence: Optional[PersistenceStore] = None
         self._persistence_error: Optional[str] = None
         try:
-            self.persistence = PersistenceStore(db_path=os.getenv("DEEPREAD_DB_PATH"))
+            self._persistence = PersistenceStore(db_path=os.getenv("DEEPREAD_DB_PATH"))
         except Exception as e:
             self._persistence_error = str(e)
 
@@ -91,13 +91,13 @@ class DeepReadAPI:
             }
             page_notes: list[dict] = []
 
-            if self.persistence:
-                self.persistence.record_document_opened(
+            if self._persistence:
+                self._persistence.record_document_opened(
                     normalized_path,
                     metadata.get("file_name") or os.path.basename(normalized_path),
                 )
-                session_state = self.persistence.get_session_state(normalized_path)
-                page_notes = self.persistence.list_page_notes(normalized_path)
+                session_state = self._persistence.get_session_state(normalized_path)
+                page_notes = self._persistence.list_page_notes(normalized_path)
 
             return {
                 "success": True,
@@ -204,10 +204,10 @@ class DeepReadAPI:
 
     def get_recent_files(self, limit: int = 20) -> dict:
         """Return recent files ordered by latest open time."""
-        if not self.persistence:
+        if not self._persistence:
             return {"success": True, "files": []}
         try:
-            files = self.persistence.get_recent_files(limit=limit, prune_missing=True)
+            files = self._persistence.get_recent_files(limit=limit, prune_missing=True)
             return {"success": True, "files": files}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -220,7 +220,7 @@ class DeepReadAPI:
             file_path: Document path (falls back to current_pdf_path when empty)
             state: Dict with last_page, last_zoom, ocr_enabled, ocr_mode
         """
-        if not self.persistence:
+        if not self._persistence:
             return {"success": False, "error": self._persistence_error or "Persistence unavailable"}
 
         try:
@@ -237,7 +237,7 @@ class DeepReadAPI:
                 ocr_enabled = bool(payload.get("ocrEnabled", False))
             ocr_mode = payload.get("ocr_mode") or payload.get("ocrMode") or "page"
 
-            self.persistence.save_session_state(
+            self._persistence.save_session_state(
                 target_path,
                 last_page=last_page,
                 last_zoom=last_zoom,
@@ -256,28 +256,28 @@ class DeepReadAPI:
             file_path: Document path (falls back to current_pdf_path when empty)
             notes: Full note list for the document
         """
-        if not self.persistence:
+        if not self._persistence:
             return {"success": False, "error": self._persistence_error or "Persistence unavailable"}
 
         try:
             target_path = file_path or self.current_pdf_path
             if not target_path:
                 return {"success": False, "error": "No PDF path provided"}
-            stats = self.persistence.save_page_notes(target_path, notes or [])
+            stats = self._persistence.save_page_notes(target_path, notes or [])
             return {"success": True, **stats}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     def delete_page_note(self, file_path: str, note_id: str) -> dict:
         """Delete a single page note for a document."""
-        if not self.persistence:
+        if not self._persistence:
             return {"success": False, "error": self._persistence_error or "Persistence unavailable"}
 
         try:
             target_path = file_path or self.current_pdf_path
             if not target_path:
                 return {"success": False, "error": "No PDF path provided"}
-            self.persistence.delete_page_note(target_path, note_id)
+            self._persistence.delete_page_note(target_path, note_id)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}

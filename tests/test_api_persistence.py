@@ -75,7 +75,8 @@ def test_session_state_restored_after_restart(monkeypatch, tmp_path):
         },
     )
     assert save_result["success"]
-    api.persistence.close()
+    if api._persistence:
+        api._persistence.close()
 
     api2 = _make_api(monkeypatch, db_path)
     reopened = api2.open_pdf(str(file_path))
@@ -108,7 +109,8 @@ def test_page_notes_persist_after_restart(monkeypatch, tmp_path):
     save_result = api.save_page_notes(str(file_path), notes)
     assert save_result["success"]
     assert save_result["saved"] == 1
-    api.persistence.close()
+    if api._persistence:
+        api._persistence.close()
 
     api2 = _make_api(monkeypatch, db_path)
     reopened = api2.open_pdf(str(file_path))
