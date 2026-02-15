@@ -35,6 +35,7 @@ uv run pyinstaller `
     --windowed `
     --onedir `
     --name BetterPDF `
+    --icon "installer/BetterPDF.ico" `
     --add-data "frontend;frontend" `
     --add-data "backend;backend" `
     --add-data "build_assets/models;models" `

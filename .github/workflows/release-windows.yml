@@ -65,8 +65,9 @@ jobs:
           $setupName = "BetterPDF-${{ steps.meta.outputs.version }}-win-x64-setup"
           $distDir = (Resolve-Path "dist\\BetterPDF").Path
           $webView2Setup = (Resolve-Path "build_assets\\webview2\\MicrosoftEdgeWebView2Setup.exe").Path
+          $appIcon = (Resolve-Path "installer\\BetterPDF.ico").Path
           $outputDir = (Join-Path $pwd.Path "dist")
-          & $iscc "/DMyAppVersion=${{ steps.meta.outputs.version }}" "/DDistDir=$distDir" "/DWebView2Setup=$webView2Setup" "/O$outputDir" "/F$setupName" "installer\\BetterPDF.iss"
+          & $iscc "/DMyAppVersion=${{ steps.meta.outputs.version }}" "/DDistDir=$distDir" "/DWebView2Setup=$webView2Setup" "/DAppIcon=$appIcon" "/O$outputDir" "/F$setupName" "installer\\BetterPDF.iss"
 
           $expectedSetup = "dist/$setupName.exe"
           if (!(Test-Path $expectedSetup)) {

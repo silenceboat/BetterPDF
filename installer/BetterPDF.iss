@@ -8,6 +8,9 @@
 #ifndef WebView2Setup
   #define WebView2Setup "build_assets\\webview2\\MicrosoftEdgeWebView2Setup.exe"
 #endif
+#ifndef AppIcon
+  #define AppIcon "BetterPDF.ico"
+#endif
 
 [Setup]
 AppId={{8C8AE570-4E9E-4D08-BBF3-0EF0E9AF18F0}
@@ -26,6 +29,7 @@ OutputDir=dist
 OutputBaseFilename=BetterPDF-{#MyAppVersion}-win-x64-setup
 WizardStyle=modern
 DisableProgramGroupPage=yes
+SetupIconFile={#AppIcon}
 UninstallDisplayIcon={app}\BetterPDF.exe
 
 [Languages]
