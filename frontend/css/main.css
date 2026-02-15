@@ -285,22 +285,45 @@ html, body {
 }
 
 .open-pdf-menu-btn {
-    width: 36px;
-    min-width: 36px;
-    padding: 0;
-    justify-content: center;
+    min-width: 96px;
+    padding: 0 12px 0 10px;
+    justify-content: space-between;
     border-left: none;
     border-top-left-radius: 0;
     border-bottom-left-radius: 0;
+    gap: 6px;
+    background: var(--accent-subtle);
+    color: var(--ink-primary);
 }
 
 .open-pdf-group .btn:hover {
     z-index: 1;
 }
 
+.open-pdf-menu-label {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.open-pdf-menu-caret {
+    opacity: 0.88;
+    transition: transform var(--transition-fast), opacity var(--transition-fast);
+}
+
 .open-pdf-group.menu-open .open-pdf-main,
 .open-pdf-group.menu-open .open-pdf-menu-btn {
     border-color: var(--accent-primary);
+}
+
+.open-pdf-group.menu-open .open-pdf-menu-btn {
+    background: var(--accent-primary);
+}
+
+.open-pdf-group.menu-open .open-pdf-menu-caret {
+    transform: rotate(180deg);
+    opacity: 1;
 }
 
 .recent-files-menu {
