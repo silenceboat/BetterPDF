@@ -64,6 +64,7 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     os.environ["PADDLE_PDX_CACHE_HOME"] = str(output_dir)
+    os.environ["DEEPREAD_OCR_MODEL_DIR"] = str(output_dir)
     os.environ.setdefault("PADDLE_PDX_MODEL_SOURCE", args.model_source)
     os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 

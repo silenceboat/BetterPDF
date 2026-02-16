@@ -2,6 +2,7 @@ import os
 import re
 import shutil
 import tempfile
+import json
 import importlib.util
 from functools import lru_cache
 from pathlib import Path
@@ -196,6 +197,32 @@ class Engine:
         det_name, rec_name = self.MODEL_PAIRS[0]
         return det_name, rec_name, None, None
 
+    @staticmethod
+    def _read_model_name_from_dir(model_dir: Path | None) -> str | None:
+        if model_dir is None:
+            return None
+        candidates = (
+            model_dir / "config.json",
+            model_dir / "inference.yml",
+        )
+        for config_path in candidates:
+            if not config_path.exists():
+                continue
+            try:
+                if config_path.suffix == ".json":
+                    data = json.loads(config_path.read_text(encoding="utf-8"))
+                else:
+                    import yaml
+
+                    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            except Exception:
+                continue
+
+            model_name = data.get("Global", {}).get("model_name")
+            if isinstance(model_name, str) and model_name.strip():
+                return model_name.strip()
+        return None
+
     def _resolve_model_pair(self) -> tuple[str, str]:
         """
         Prefer already-downloaded model pairs; fall back to mobile pair.
@@ -274,13 +301,15 @@ class Engine:
             "use_textline_orientation": False,
         }
         det_name, rec_name, det_dir, rec_dir = self._resolve_model_pair_and_dirs()
+        det_runtime_name = self._read_model_name_from_dir(det_dir) or det_name
+        rec_runtime_name = self._read_model_name_from_dir(rec_dir) or rec_name
 
         if det_dir and rec_dir:
             local_kwargs = {
                 "text_detection_model_dir": str(det_dir),
                 "text_recognition_model_dir": str(rec_dir),
-                "text_detection_model_name": det_name,
-                "text_recognition_model_name": rec_name,
+                "text_detection_model_name": det_runtime_name,
+                "text_recognition_model_name": rec_runtime_name,
             }
             try:
                 return PaddleOCR(**local_kwargs, **kwargs)
@@ -305,8 +334,8 @@ class Engine:
         # Prefer mobile models to reduce download size and improve cold-start.
         try:
             return PaddleOCR(
-                text_detection_model_name=det_name,
-                text_recognition_model_name=rec_name,
+                text_detection_model_name=det_runtime_name,
+                text_recognition_model_name=rec_runtime_name,
                 **kwargs,
             )
         except TypeError:
