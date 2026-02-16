@@ -13,6 +13,7 @@ class Engine:
         ("PP-OCRv5_server_det", "PP-OCRv5_server_rec"),
     )
     PIPELINE_DEPENDENCY_ERROR_MARKER = "A dependency error occurred during pipeline creation"
+    MODEL_NAME_MISMATCH_MARKER = "Model name mismatch"
     FALLBACK_OCR_DEP_PACKAGES = (
         "Jinja2",
         "beautifulsoup4",
@@ -122,7 +123,23 @@ class Engine:
             except Exception:
                 continue
 
+    def _get_explicit_model_root(self) -> Path | None:
+        model_root = os.environ.get("DEEPREAD_OCR_MODEL_DIR", "").strip()
+        if not model_root:
+            return None
+        root = Path(model_root).expanduser()
+        try:
+            return root.resolve()
+        except Exception:
+            return root
+
     def _get_model_cache_roots(self) -> list[Path]:
+        explicit_root = self._get_explicit_model_root()
+        if explicit_root is not None:
+            # When explicit model root is provided (packaged build), keep OCR
+            # model selection isolated from any stale user-level caches.
+            return [explicit_root]
+
         roots: list[Path] = []
 
         pdx_cache_home = os.environ.get("PADDLE_PDX_CACHE_HOME")
@@ -146,21 +163,45 @@ class Engine:
             deduped.append(root)
         return deduped
 
+    @staticmethod
+    def _iter_model_dir_candidates(root: Path, model_name: str) -> tuple[Path, Path]:
+        return (
+            root / "official_models" / model_name,
+            root / model_name,
+        )
+
     def _get_local_model_dir(self, model_name: str) -> Path | None:
         for root in self._get_model_cache_roots():
-            model_dir = root / "official_models" / model_name
-            if (model_dir / "inference.json").exists():
-                return model_dir
+            for model_dir in self._iter_model_dir_candidates(root, model_name):
+                if (model_dir / "inference.json").exists():
+                    return model_dir
         return None
+
+    def _resolve_model_pair_and_dirs(self) -> tuple[str, str, Path | None, Path | None]:
+        roots = self._get_model_cache_roots()
+        for det_name, rec_name in self.MODEL_PAIRS:
+            for root in roots:
+                det_dir = None
+                rec_dir = None
+                for candidate in self._iter_model_dir_candidates(root, det_name):
+                    if (candidate / "inference.json").exists():
+                        det_dir = candidate
+                        break
+                for candidate in self._iter_model_dir_candidates(root, rec_name):
+                    if (candidate / "inference.json").exists():
+                        rec_dir = candidate
+                        break
+                if det_dir and rec_dir:
+                    return det_name, rec_name, det_dir, rec_dir
+        det_name, rec_name = self.MODEL_PAIRS[0]
+        return det_name, rec_name, None, None
 
     def _resolve_model_pair(self) -> tuple[str, str]:
         """
         Prefer already-downloaded model pairs; fall back to mobile pair.
         """
-        for det_name, rec_name in self.MODEL_PAIRS:
-            if self._get_local_model_dir(det_name) and self._get_local_model_dir(rec_name):
-                return det_name, rec_name
-        return self.MODEL_PAIRS[0]
+        det_name, rec_name, _, _ = self._resolve_model_pair_and_dirs()
+        return det_name, rec_name
 
     def _is_within_allowed_roots(self, target_dir: Path, allowed_roots: list[Path]) -> bool:
         try:
@@ -206,13 +247,13 @@ class Engine:
 
         for root in allowed_roots:
             for model_name in model_names:
-                model_dir = root / "official_models" / model_name
-                if not model_dir.exists():
-                    continue
-                # The current PaddleOCR/PaddleX stack expects inference.json.
-                if (model_dir / "inference.json").exists():
-                    continue
-                self._safe_delete_model_dir(model_dir, allowed_roots)
+                for model_dir in self._iter_model_dir_candidates(root, model_name):
+                    if not model_dir.exists():
+                        continue
+                    # The current PaddleOCR/PaddleX stack expects inference.json.
+                    if (model_dir / "inference.json").exists():
+                        continue
+                    self._safe_delete_model_dir(model_dir, allowed_roots)
 
     @property
     def ocr_model(self):
@@ -232,9 +273,7 @@ class Engine:
             "use_doc_unwarping": False,
             "use_textline_orientation": False,
         }
-        det_name, rec_name = self._resolve_model_pair()
-        det_dir = self._get_local_model_dir(det_name)
-        rec_dir = self._get_local_model_dir(rec_name)
+        det_name, rec_name, det_dir, rec_dir = self._resolve_model_pair_and_dirs()
 
         if det_dir and rec_dir:
             local_kwargs = {
@@ -374,6 +413,10 @@ class Engine:
         try:
             return self._build_ocr_model()
         except Exception as first_error:
+            if self._recover_model_name_mismatch(str(first_error)):
+                self._cleanup_incomplete_model_cache()
+                return self._build_ocr_model()
+
             if self._is_extra_dependency_error(first_error):
                 # Retry once with metadata-independent dependency probing.
                 if self._patch_paddlex_dependency_probe():
@@ -441,6 +484,38 @@ class Engine:
 
         return deleted_any
 
+    def _recover_model_name_mismatch(self, error_message: str) -> bool:
+        """
+        Model files may be placed under a wrong model folder name in stale
+        caches. Delete those directories and force a clean model restore.
+        """
+        if self.MODEL_NAME_MISMATCH_MARKER not in error_message:
+            return False
+
+        allowed_roots = self._get_model_cache_roots()
+        explicit_root = self._get_explicit_model_root()
+        explicit_root_key = (
+            os.path.normcase(str(explicit_root))
+            if explicit_root is not None
+            else None
+        )
+        model_names = {
+            model_name
+            for det_name, rec_name in self.MODEL_PAIRS
+            for model_name in (det_name, rec_name)
+        }
+
+        deleted_any = False
+        for root in allowed_roots:
+            root_key = os.path.normcase(str(root))
+            if explicit_root_key is not None and root_key == explicit_root_key:
+                continue
+            for model_name in model_names:
+                for model_dir in self._iter_model_dir_candidates(root, model_name):
+                    if self._safe_delete_model_dir(model_dir, allowed_roots):
+                        deleted_any = True
+        return deleted_any
+
     def process_image(self, image_path) -> list:
         """
         对单张图片执行 OCR 识别。
@@ -461,7 +536,11 @@ class Engine:
         except Exception as first_error:
             # Some PaddleOCR builds fail lazily on first predict when cached
             # model files are corrupted. Recover once and retry.
-            if not self._recover_broken_model_cache(str(first_error)):
+            recovered = (
+                self._recover_broken_model_cache(str(first_error))
+                or self._recover_model_name_mismatch(str(first_error))
+            )
+            if not recovered:
                 raise
             self._ocr_model = None
             result = self.ocr_model.predict(image_path)
