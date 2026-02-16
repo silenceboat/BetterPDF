@@ -279,12 +279,28 @@ class Engine:
             local_kwargs = {
                 "text_detection_model_dir": str(det_dir),
                 "text_recognition_model_dir": str(rec_dir),
+                "text_detection_model_name": det_name,
+                "text_recognition_model_name": rec_name,
             }
             try:
                 return PaddleOCR(**local_kwargs, **kwargs)
             except TypeError:
-                # Some builds may not expose *_model_dir kwargs.
-                pass
+                # Some builds may not expose *_model_name kwargs together with
+                # *_model_dir; retry with directory-only arguments.
+                legacy_local_kwargs = {
+                    "text_detection_model_dir": str(det_dir),
+                    "text_recognition_model_dir": str(rec_dir),
+                }
+                try:
+                    return PaddleOCR(**legacy_local_kwargs, **kwargs)
+                except Exception as local_error:
+                    # If local dir metadata and requested model name are not
+                    # aligned, fall back to name-based resolution.
+                    if self.MODEL_NAME_MISMATCH_MARKER not in str(local_error):
+                        raise
+            except Exception as local_error:
+                if self.MODEL_NAME_MISMATCH_MARKER not in str(local_error):
+                    raise
 
         # Prefer mobile models to reduce download size and improve cold-start.
         try:
