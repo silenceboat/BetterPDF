@@ -28,6 +28,8 @@ if (-not $SkipTests) {
     uv run pytest -q tests/test_ocr_engine.py tests/test_ocr_normalize.py tests/test_api_persistence.py
 }
 
+# PaddleX checks dependency availability via package metadata at runtime.
+# Keep metadata and OCR extra modules in the frozen bundle.
 Write-Host "[build] running PyInstaller"
 uv run pyinstaller `
     --noconfirm `
@@ -47,6 +49,28 @@ uv run pyinstaller `
     --collect-data paddlex `
     --collect-data paddle `
     --collect-data webview `
+    --recursive-copy-metadata paddleocr `
+    --recursive-copy-metadata paddlex `
+    --collect-all cv2 `
+    --collect-all sklearn `
+    --collect-all scipy `
+    --collect-all shapely `
+    --collect-all tokenizers `
+    --collect-all sentencepiece `
+    --collect-all tiktoken `
+    --collect-all pyclipper `
+    --collect-all pypdfium2 `
+    --collect-all premailer `
+    --collect-all lxml `
+    --collect-all bs4 `
+    --collect-all jinja2 `
+    --collect-all openpyxl `
+    --collect-all regex `
+    --collect-all ftfy `
+    --collect-all einops `
+    --collect-all imagesize `
+    --collect-all bidi `
+    --collect-all safetensors `
     main.py
 
 $portableLauncher = @"

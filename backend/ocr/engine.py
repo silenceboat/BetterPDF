@@ -2,6 +2,8 @@ import os
 import re
 import shutil
 import tempfile
+import importlib.util
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -10,6 +12,42 @@ class Engine:
         ("PP-OCRv5_mobile_det", "PP-OCRv5_mobile_rec"),
         ("PP-OCRv5_server_det", "PP-OCRv5_server_rec"),
     )
+    PIPELINE_DEPENDENCY_ERROR_MARKER = "A dependency error occurred during pipeline creation"
+    FALLBACK_OCR_DEP_PACKAGES = (
+        "Jinja2",
+        "beautifulsoup4",
+        "einops",
+        "ftfy",
+        "imagesize",
+        "lxml",
+        "opencv-contrib-python",
+        "openpyxl",
+        "premailer",
+        "pyclipper",
+        "pypdfium2",
+        "python-bidi",
+        "regex",
+        "safetensors",
+        "scikit-learn",
+        "scipy",
+        "sentencepiece",
+        "shapely",
+        "tiktoken",
+        "tokenizers",
+    )
+    DEP_IMPORT_MAP = {
+        "aistudio-sdk": ("aistudio_sdk",),
+        "beautifulsoup4": ("bs4",),
+        "jinja2": ("jinja2",),
+        "opencv-contrib-python": ("cv2",),
+        "pillow": ("PIL",),
+        "py-cpuinfo": ("cpuinfo",),
+        "python-bidi": ("bidi",),
+        "pyyaml": ("yaml",),
+        "ruamel-yaml": ("ruamel.yaml",),
+        "scikit-learn": ("sklearn",),
+        "typing-extensions": ("typing_extensions",),
+    }
 
     def __init__(self, ocr_model=None):
         self._ocr_model = ocr_model
@@ -220,6 +258,114 @@ class Engine:
             # Older/newer PaddleOCR builds may not expose these kwargs.
             return PaddleOCR(**kwargs)
 
+    @staticmethod
+    def _module_exists(module_name: str) -> bool:
+        try:
+            return importlib.util.find_spec(module_name) is not None
+        except Exception:
+            return False
+
+    def _dep_to_module_candidates(self, dep_name: str) -> tuple[str, ...]:
+        normalized = dep_name.strip().lower()
+        mapped = self.DEP_IMPORT_MAP.get(normalized)
+        if mapped:
+            return mapped
+        return (normalized.replace("-", "_"),)
+
+    def _get_paddlex_ocr_dep_packages(self) -> list[str]:
+        try:
+            from paddlex.utils import deps as paddlex_deps
+
+            extra = getattr(paddlex_deps, "EXTRAS", {}).get("ocr")
+            if extra:
+                return sorted(extra.keys())
+        except Exception:
+            pass
+        return list(self.FALLBACK_OCR_DEP_PACKAGES)
+
+    def _find_missing_ocr_dep_packages(self) -> list[str]:
+        missing: list[str] = []
+        for dep_name in self._get_paddlex_ocr_dep_packages():
+            if any(self._module_exists(name) for name in self._dep_to_module_candidates(dep_name)):
+                continue
+            missing.append(dep_name)
+        return missing
+
+    def _is_pipeline_dependency_error(self, error: Exception) -> bool:
+        if self.PIPELINE_DEPENDENCY_ERROR_MARKER in str(error):
+            return True
+        cause = getattr(error, "__cause__", None)
+        if cause is None:
+            return False
+        cause_msg = str(cause)
+        return (
+            "requires additional dependencies" in cause_msg
+            or "following dependencies are not available" in cause_msg
+        )
+
+    def _is_extra_dependency_error(self, error: Exception) -> bool:
+        cause = getattr(error, "__cause__", None)
+        if cause is None:
+            return False
+        cause_msg = str(cause)
+        return (
+            "requires additional dependencies" in cause_msg
+            or "following dependencies are not available" in cause_msg
+        )
+
+    def _patch_paddlex_dependency_probe(self) -> bool:
+        try:
+            from paddlex.utils import deps as paddlex_deps
+        except Exception:
+            return False
+
+        if getattr(paddlex_deps, "_betterpdf_dep_probe_patched", False):
+            return True
+
+        original_is_dep_available = paddlex_deps.is_dep_available
+
+        @lru_cache(maxsize=None)
+        def _patched_is_dep_available(dep, /, check_version=False):
+            try:
+                if original_is_dep_available(dep, check_version=check_version):
+                    return True
+            except Exception:
+                if check_version:
+                    return False
+
+            # Frozen/packed builds may miss dist-info metadata while the module
+            # itself is bundled and importable.
+            if check_version:
+                return False
+            return any(
+                self._module_exists(name)
+                for name in self._dep_to_module_candidates(dep)
+            )
+
+        paddlex_deps.is_dep_available = _patched_is_dep_available
+        clear_cache = getattr(getattr(paddlex_deps, "is_extra_available", None), "cache_clear", None)
+        if callable(clear_cache):
+            clear_cache()
+        paddlex_deps._betterpdf_dep_probe_patched = True
+        return True
+
+    def _format_pipeline_dependency_error(self, error: Exception) -> RuntimeError:
+        missing_deps = self._find_missing_ocr_dep_packages()
+        if missing_deps:
+            msg = (
+                "OCR pipeline missing runtime dependencies: "
+                + ", ".join(missing_deps)
+                + '. Install/update with `pip install "paddlex[ocr]"` '
+                "or use the latest official BetterPDF release package."
+            )
+            return RuntimeError(msg)
+
+        msg = (
+            "OCR dependency check failed during pipeline creation. "
+            "Modules are present, but package metadata may be incomplete in this build."
+        )
+        return RuntimeError(msg)
+
     def _create_ocr_model_with_recovery(self):
         """
         Create OCR model and recover from broken local model cache once.
@@ -228,11 +374,27 @@ class Engine:
         try:
             return self._build_ocr_model()
         except Exception as first_error:
+            if self._is_extra_dependency_error(first_error):
+                # Retry once with metadata-independent dependency probing.
+                if self._patch_paddlex_dependency_probe():
+                    try:
+                        return self._build_ocr_model()
+                    except Exception as patched_error:
+                        first_error = patched_error
+
+            if self._is_pipeline_dependency_error(first_error):
+                raise self._format_pipeline_dependency_error(first_error) from first_error
+
             if not self._recover_broken_model_cache(str(first_error)):
                 raise
             # Retry once after removing broken cache.
             self._cleanup_incomplete_model_cache()
-            return self._build_ocr_model()
+            try:
+                return self._build_ocr_model()
+            except Exception as second_error:
+                if self._is_pipeline_dependency_error(second_error):
+                    raise self._format_pipeline_dependency_error(second_error) from second_error
+                raise
 
     def _recover_broken_model_cache(self, error_message: str) -> bool:
         """
