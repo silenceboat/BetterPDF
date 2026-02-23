@@ -10,6 +10,7 @@ dependencies = [
     "paddlepaddle==3.2.0",
     "pillow>=10.0",
     "pymupdf>=1.23",
+    "python-docx>=1.1.0",
     "pywebview>=4.4",
     "requests>=2.28",
 ]

@@ -329,9 +329,11 @@ class DeepReadApp {
                 this.notesPanel?.render(document.getElementById('panel-content'));
             }
 
+            this.pdfViewer.setOcrAvailable(openResult?.supports_ocr !== false);
+
             await this.refreshRecentFiles();
             this.hideRecentFilesMenu();
-            this.showToast('PDF opened successfully', 'success');
+            this.showToast('Document opened successfully', 'success');
         } catch (error) {
             console.error('Failed to open PDF:', error);
             this.showToast('Failed to open PDF', 'error');

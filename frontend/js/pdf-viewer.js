@@ -68,8 +68,8 @@ class PDFViewer {
                             <path d="M14 13v7"/>
                         </svg>
                     </div>
-                    <div class="pdf-placeholder-text">No PDF Open</div>
-                    <div class="pdf-placeholder-hint">Click "Open PDF" to get started</div>
+                    <div class="pdf-placeholder-text">No Document Open</div>
+                    <div class="pdf-placeholder-hint">Click "Open File" to get started</div>
                     <button class="btn btn-primary" id="open-pdf-placeholder-btn">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M6 22a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2H6Z"/>
@@ -77,7 +77,7 @@ class PDFViewer {
                             <path d="M12 18v-6"/>
                             <path d="M9 15l3 3 3-3"/>
                         </svg>
-                        Open PDF
+                        Open File
                     </button>
                 </div>
             </div>
@@ -89,6 +89,11 @@ class PDFViewer {
                 window.app?.openPdf();
             });
         }
+    }
+
+    setOcrAvailable(available) {
+        const ocrEntry = document.getElementById('ocr-entry');
+        if (ocrEntry) ocrEntry.style.display = available ? '' : 'none';
     }
 
     async loadDocument(filePath) {
@@ -198,7 +203,7 @@ class PDFViewer {
                             <span class="ocr-mode-desc">Fast recognition for current page only.</span>
                         </button>
                         <button class="ocr-mode-item" id="ocr-mode-document">
-                            <span class="ocr-mode-title">OCR Entire PDF</span>
+                            <span class="ocr-mode-title">OCR Entire Document</span>
                             <span class="ocr-mode-desc">Background scan for all pages with progress.</span>
                         </button>
                     </div>

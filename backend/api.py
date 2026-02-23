@@ -11,6 +11,7 @@ import threading
 import time
 
 from .pdf_engine import PDFEngine
+from .engine_factory import create_engine
 from .ai_service import AIService
 from .persistence import PersistenceStore
 
@@ -86,7 +87,7 @@ class DeepReadAPI:
                 self.pdf_engine.close()
                 self._cleanup_ocr()
 
-            self.pdf_engine = PDFEngine(normalized_path)
+            self.pdf_engine = create_engine(normalized_path)
             self.current_pdf_path = normalized_path
 
             metadata = self.pdf_engine.get_metadata()
@@ -115,6 +116,7 @@ class DeepReadAPI:
                 "metadata": metadata,
                 "session_state": session_state,
                 "page_notes": page_notes,
+                "supports_ocr": isinstance(self.pdf_engine, PDFEngine),
             }
         except Exception as e:
             return {
@@ -439,6 +441,8 @@ class DeepReadAPI:
         """
         if not self.pdf_engine:
             return {"success": False, "error": "No PDF open"}
+        if not isinstance(self.pdf_engine, PDFEngine):
+            return {"success": False, "error": "OCR is only available for PDF files"}
 
         try:
             # Return cached result if available
@@ -504,6 +508,8 @@ class DeepReadAPI:
         """
         if not self.pdf_engine:
             return {"success": False, "error": "No PDF open"}
+        if not isinstance(self.pdf_engine, PDFEngine):
+            return {"success": False, "error": "OCR is only available for PDF files"}
 
         page_count = self.pdf_engine.page_count
         if page_count <= 0:
@@ -804,7 +810,7 @@ class DeepReadAPI:
         script = r"""
 Add-Type -AssemblyName System.Windows.Forms
 $dialog = New-Object System.Windows.Forms.OpenFileDialog
-$dialog.Filter = "PDF Files (*.pdf)|*.pdf|All Files (*.*)|*.*"
+$dialog.Filter = "Supported Files (*.pdf;*.docx;*.txt)|*.pdf;*.docx;*.txt|PDF (*.pdf)|*.pdf|Word (*.docx)|*.docx|Text (*.txt)|*.txt|All (*.*)|*.*"
 $dialog.Multiselect = $false
 $dialog.RestoreDirectory = $true
 if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
@@ -876,7 +882,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
             import webview
             result = self._window.create_file_dialog(
                 webview.OPEN_DIALOG,
-                file_types=('PDF Files (*.pdf)', 'All Files (*.*)'),
+                file_types=('Supported Files (*.pdf;*.docx;*.txt)', 'PDF Files (*.pdf)', 'Word Files (*.docx)', 'Text Files (*.txt)', 'All Files (*.*)'),
             )
 
             if result and len(result) > 0:

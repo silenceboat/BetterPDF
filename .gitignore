@@ -215,10 +215,14 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 
+# Claude Code
+.claude/
+
 # Application specific
 *.pdf
 !example.pdf
 uploads/
 temp/
+cache/
 *.db
 *.sqlite

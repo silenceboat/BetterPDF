@@ -49,7 +49,8 @@ const API = {
                     ocr_enabled: false,
                     ocr_mode: 'page'
                 },
-                page_notes: []
+                page_notes: [],
+                supports_ocr: true
             }),
             get_page: () => ({
                 success: true,

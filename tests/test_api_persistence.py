@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 
 import backend.api as api_module
+import backend.engine_factory as engine_factory_module
 from backend.persistence import PersistenceStore
 
 
@@ -32,6 +33,7 @@ class FakePDFEngine:
 def _make_api(monkeypatch, db_path: Path):
     monkeypatch.setenv("DEEPREAD_DB_PATH", str(db_path))
     monkeypatch.setattr(api_module, "PDFEngine", FakePDFEngine)
+    monkeypatch.setattr(engine_factory_module, "PDFEngine", FakePDFEngine)
     return api_module.DeepReadAPI()
 
 
