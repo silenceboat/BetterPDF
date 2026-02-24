@@ -78,6 +78,7 @@ class AIService:
         if api_key is not None:
             self.api_key = str(api_key or "").strip()
         self._init_client()
+        self._history.clear()
 
     def get_config(self) -> dict[str, Any]:
         """Return active AI settings (includes key for local UI persistence)."""
@@ -113,6 +114,8 @@ class AIService:
         elif self.provider == "ollama":
             self.client = "ollama"
 
+    _MAX_HISTORY_TURNS = 10  # keep last N user/assistant pairs
+
     def chat(self, message: str, context: Optional[str] = None) -> str:
         """
         Send a chat message and get a response.
@@ -124,129 +127,125 @@ class AIService:
         Returns:
             AI response text
         """
-        messages = []
-
-        # Add system message
-        messages.append({
+        system_msg = {
             "role": "system",
             "content": "You are a helpful AI reading assistant. Help the user understand and analyze documents."
-        })
+        }
 
-        # Add context if provided
+        # Build the user turn (with optional document context)
         if context:
-            messages.append({
-                "role": "user",
-                "content": f"Context from document:\n{context}\n\nUser question: {message}"
-            })
+            user_content = f"Context from document:\n{context}\n\nUser question: {message}"
         else:
-            messages.append({"role": "user", "content": message})
+            user_content = message
+
+        user_msg = {"role": "user", "content": user_content}
+
+        # Assemble full messages: system + trimmed history + current user turn
+        messages = [system_msg] + self._history[-self._MAX_HISTORY_TURNS * 2:] + [user_msg]
 
         # Call appropriate provider
         self._ensure_client()
         if self.provider == "openai" and self.client:
-            return self._chat_openai(messages)
+            response = self._chat_openai(messages)
         elif self.provider == "anthropic" and self.client:
-            return self._chat_anthropic(messages)
+            response = self._chat_anthropic(messages)
         elif self.provider == "ollama":
-            return self._chat_ollama(messages)
+            response = self._chat_ollama(messages)
         else:
             # Fallback mock response
             return self._mock_response(message, context)
 
+        # Persist to history only on success
+        self._history.append(user_msg)
+        self._history.append({"role": "assistant", "content": response})
+
+        return response
+
     def _chat_openai(self, messages: list[dict]) -> str:
         """Send chat request to OpenAI."""
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=2000,
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            return f"Error: {str(e)}"
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=0.7,
+            max_tokens=2000,
+        )
+        return response.choices[0].message.content
 
     def _chat_ollama(self, messages: list[dict]) -> str:
-        """Send chat request to Ollama."""
+        """Send chat request to Ollama using /api/chat."""
         import requests
 
-        try:
-            # Convert messages to Ollama format
-            prompt = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
-            base_url = self.base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-            endpoint = base_url.rstrip("/") + "/api/generate"
-            headers: dict[str, str] = {}
-            if self.api_key:
-                headers["Authorization"] = f"Bearer {self.api_key}"
+        base_url = self.base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        endpoint = base_url.rstrip("/") + "/api/chat"
+        headers: dict[str, str] = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
 
-            response = requests.post(
-                endpoint,
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": False,
-                },
-                headers=headers or None,
-                timeout=120,
-            )
-            response.raise_for_status()
-            return response.json()["response"]
-        except Exception as e:
-            return f"Error connecting to Ollama: {str(e)}\nMake sure provider URL is reachable."
+        response = requests.post(
+            endpoint,
+            json={
+                "model": self.model,
+                "messages": messages,
+                "stream": False,
+            },
+            headers=headers or None,
+            timeout=120,
+        )
+        response.raise_for_status()
+        return response.json()["message"]["content"]
 
     def _chat_anthropic(self, messages: list[dict]) -> str:
         """Send chat request to Anthropic Messages API."""
         import requests
 
-        try:
-            api_key = self._resolve_api_key()
-            if not api_key:
-                return "Error: Anthropic API key is missing. Set it in Settings or ANTHROPIC_API_KEY."
+        api_key = self._resolve_api_key()
+        if not api_key:
+            raise ValueError("Anthropic API key is missing. Set it in Settings or ANTHROPIC_API_KEY.")
 
-            base_url = self.base_url or os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
-            endpoint = base_url.rstrip("/") + "/v1/messages"
+        base_url = self.base_url or os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+        endpoint = base_url.rstrip("/") + "/v1/messages"
 
-            system_parts: list[str] = []
-            conversation: list[dict[str, str]] = []
-            for item in messages:
-                role = str(item.get("role") or "").strip().lower()
-                content = str(item.get("content") or "")
-                if role == "system":
-                    system_parts.append(content)
-                elif role in {"user", "assistant"}:
-                    conversation.append({"role": role, "content": content})
+        system_parts: list[str] = []
+        conversation: list[dict[str, str]] = []
+        for item in messages:
+            role = str(item.get("role") or "").strip().lower()
+            content = str(item.get("content") or "")
+            if role == "system":
+                system_parts.append(content)
+            elif role in {"user", "assistant"}:
+                conversation.append({"role": role, "content": content})
 
-            payload: dict[str, Any] = {
-                "model": self.model,
-                "messages": conversation,
-                "temperature": 0.7,
-                "max_tokens": 2000,
-            }
-            if system_parts:
-                payload["system"] = "\n\n".join(system_parts)
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": conversation,
+            "temperature": 0.7,
+            "max_tokens": 2000,
+        }
+        if system_parts:
+            payload["system"] = "\n\n".join(system_parts)
 
-            response = requests.post(
-                endpoint,
-                json=payload,
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                timeout=120,
-            )
-            response.raise_for_status()
-            data = response.json()
-            blocks = data.get("content") or []
-            text_parts = [
-                str(block.get("text") or "")
-                for block in blocks
-                if isinstance(block, dict) and block.get("type") == "text"
-            ]
-            merged = "\n".join(part for part in text_parts if part).strip()
-            return merged or "Error: Anthropic response did not include text content."
-        except Exception as e:
-            return f"Error connecting to Anthropic: {str(e)}\nCheck API key, model, and endpoint."
+        response = requests.post(
+            endpoint,
+            json=payload,
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            timeout=120,
+        )
+        response.raise_for_status()
+        data = response.json()
+        blocks = data.get("content") or []
+        text_parts = [
+            str(block.get("text") or "")
+            for block in blocks
+            if isinstance(block, dict) and block.get("type") == "text"
+        ]
+        merged = "\n".join(part for part in text_parts if part).strip()
+        if not merged:
+            raise RuntimeError("Anthropic response did not include text content.")
+        return merged
 
     def _mock_response(self, message: str, context: Optional[str]) -> str:
         """Generate a mock response when no AI provider is available."""

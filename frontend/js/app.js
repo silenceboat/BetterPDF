@@ -6,7 +6,7 @@
 
 class DeepReadApp {
     constructor() {
-        this.currentPanel = 'ai'; // 'ai' or 'notes' or 'settings'
+        this.currentPanel = 'ai'; // 'ai' or 'notes'
         this.pdfViewer = null;
         this.aiPanel = null;
         this.notesPanel = null;
@@ -26,6 +26,8 @@ class DeepReadApp {
         this.recentMenuEl = null;
         this.recentFilesRequestSeq = 0;
         this.isPdfFocusMode = false;
+        this.settingsPopupOpen = false;
+        this.settingsPopupHideHandler = null;
 
         this.init();
     }
@@ -49,7 +51,8 @@ class DeepReadApp {
         this.pdfViewer = new PDFViewer('pdf-panel-root');
         this.aiPanel = new AIChatPanel('panel-content');
         this.notesPanel = new NotesPanel('panel-content');
-        this.settingsPanel = new SettingsPanel('panel-content');
+        this.settingsPanel = new SettingsPanel('settings-popup');
+        this.setupSettingsPopup();
         this.setupPageSync();
         this.setupStatePersistenceSync();
         this.setupResizableLayout();
@@ -108,6 +111,79 @@ class DeepReadApp {
         document.getElementById('save-btn')?.addEventListener('click', () => {
             this.saveCurrentNote();
         });
+
+        // Search box
+        const searchInput = document.getElementById('search-input');
+        if (searchInput) {
+            let searchTimer = null;
+            searchInput.addEventListener('input', () => {
+                clearTimeout(searchTimer);
+                const query = searchInput.value.trim();
+                if (!query) {
+                    this.pdfViewer?.clearSearchHighlights();
+                    return;
+                }
+                searchTimer = setTimeout(() => this.performSearch(query), 350);
+            });
+            searchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    searchInput.value = '';
+                    this.pdfViewer?.clearSearchHighlights();
+                    searchInput.blur();
+                }
+            });
+        }
+    }
+
+    setupSettingsPopup() {
+        const settingsBtn = document.getElementById('settings-btn');
+        settingsBtn?.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this.toggleSettingsPopup();
+        });
+    }
+
+    toggleSettingsPopup() {
+        if (this.settingsPopupOpen) {
+            this.hideSettingsPopup();
+        } else {
+            this.showSettingsPopup();
+        }
+    }
+
+    showSettingsPopup() {
+        const popup = document.getElementById('settings-popup');
+        const btn = document.getElementById('settings-btn');
+        if (!popup) return;
+
+        this.settingsPanel.render(popup);
+        popup.hidden = false;
+        this.settingsPopupOpen = true;
+        if (btn) btn.setAttribute('aria-expanded', 'true');
+
+        this.settingsPopupHideHandler = (event) => {
+            if (!event.target.closest('.settings-popup-anchor')) {
+                this.hideSettingsPopup();
+            }
+        };
+        setTimeout(() => {
+            document.addEventListener('click', this.settingsPopupHideHandler);
+        }, 0);
+    }
+
+    hideSettingsPopup() {
+        const popup = document.getElementById('settings-popup');
+        const btn = document.getElementById('settings-btn');
+        if (!popup) return;
+
+        popup.hidden = true;
+        this.settingsPopupOpen = false;
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+
+        if (this.settingsPopupHideHandler) {
+            document.removeEventListener('click', this.settingsPopupHideHandler);
+            this.settingsPopupHideHandler = null;
+        }
     }
 
     setupPanelTabs() {
@@ -205,6 +281,30 @@ class DeepReadApp {
         });
     }
 
+    async performSearch(query) {
+        if (!this.currentFilePath || !query) return;
+
+        try {
+            const result = await API.searchPdf(query);
+            if (!result.success) {
+                this.showToast(result.error || 'Search failed', 'error');
+                return;
+            }
+
+            const results = result.results || [];
+            if (results.length === 0) {
+                this.showToast(`No results for "${query}"`, 'info', 2000);
+                this.pdfViewer?.clearSearchHighlights();
+                return;
+            }
+
+            this.pdfViewer?.setSearchHighlights(results);
+            this.showToast(`${results.length} result${results.length > 1 ? 's' : ''} found`, 'success', 1800);
+        } catch (err) {
+            console.error('Search error:', err);
+        }
+    }
+
     setupKeyboardShortcuts() {
         document.addEventListener('keydown', (e) => {
             if (e.ctrlKey || e.metaKey) {
@@ -258,7 +358,7 @@ class DeepReadApp {
     // ==================== Panel Management ====================
 
     switchPanel(panel) {
-        if (panel !== 'ai' && panel !== 'notes' && panel !== 'settings') {
+        if (panel !== 'ai' && panel !== 'notes') {
             return;
         }
         this.currentPanel = panel;
@@ -278,13 +378,14 @@ class DeepReadApp {
         const content = document.getElementById('panel-content');
         if (content) {
             if (panel === 'ai') {
-                this.aiPanel.render(content);
+                // Only re-render if the AI panel isn't already mounted to preserve chat history
+                if (!content.querySelector('.ai-chat-head')) {
+                    this.aiPanel.render(content);
+                }
             } else if (panel === 'notes') {
                 const currentPage = this.pdfViewer?.getCurrentPage() || 1;
                 this.notesPanel.setActivePage(currentPage, { render: false, preserveActive: true });
                 this.notesPanel.render(content);
-            } else if (panel === 'settings') {
-                this.settingsPanel.render(content);
             }
         }
     }
@@ -823,7 +924,7 @@ class AIChatPanel {
 
     bindEvents() {
         document.getElementById('open-ai-settings-btn')?.addEventListener('click', () => {
-            window.app?.switchPanel('settings');
+            window.app?.showSettingsPopup();
         });
 
         // Quick actions
@@ -904,7 +1005,20 @@ class AIChatPanel {
         };
 
         this.addUserMessage(`[${actionNames[action]}]`);
-        await this.processAiQuickAction(action);
+
+        // Extract text from the current page to provide document context
+        let context = '';
+        const currentPage = window.app?.pdfViewer?.getCurrentPage();
+        if (currentPage) {
+            try {
+                const textResult = await API.extractText(currentPage);
+                if (textResult.success && textResult.text?.trim()) {
+                    context = `Page ${currentPage}:\n${textResult.text.trim()}`;
+                }
+            } catch (_) {}
+        }
+
+        await this.processAiQuickAction(action, context);
     }
 
     setPendingSelectionContext(payload) {
@@ -1089,14 +1203,14 @@ class AIChatPanel {
         }
     }
 
-    async processAiQuickAction(actionType) {
+    async processAiQuickAction(actionType, context = '') {
         if (this.isProcessing) return;
 
         this.isProcessing = true;
         this.showTypingIndicator();
 
         try {
-            const result = await API.aiQuickAction(actionType);
+            const result = await API.aiQuickAction(actionType, context);
 
             this.hideTypingIndicator();
 
@@ -1408,6 +1522,7 @@ class SettingsPanel {
                 this.setFeedback(`Saved. Add ${savedProfile.keyLabel.toLowerCase()} to activate requests.`, 'neutral');
             }
             this.applyProviderProfile(savedProvider);
+            window.app?.aiPanel?.refreshProviderStatus();
             window.app?.showToast(`${savedProfile.label} settings saved`, 'success', 1600);
         } catch (error) {
             this.setStatus('Save failed', 'error');

@@ -27,6 +27,10 @@ class PDFViewer {
         this.focusedNote = null;
         this.noteFocusTimeout = null;
 
+        // Search state
+        this.searchHighlights = {}; // page_num -> [{x1,y1,x2,y2}]
+        this.searchCurrentPage = 0; // first result page
+
         // OCR state
         this.ocrEnabled = false;
         this.ocrMode = 'page'; // 'page' or 'document'
@@ -115,6 +119,8 @@ class PDFViewer {
                 : 1.0;
             this.ocrResults = {};
             this.ocrEnabled = false;
+            this.searchHighlights = {};
+            this.searchCurrentPage = 0;
             this.ocrMode = session.ocr_mode === 'document' ? 'document' : 'page';
             this.ocrPageLoadingPage = null;
             this.ocrDocumentFullyProcessed = false;
@@ -371,6 +377,8 @@ class PDFViewer {
                 if (this.focusedNote?.page === this.currentPage && this.focusedNote.rectPdf) {
                     this.renderNoteFocusHighlight(this.focusedNote.rectPdf);
                 }
+
+                this.renderSearchHighlights();
             }
         } catch (error) {
             console.error('Failed to render page:', error);
@@ -1184,6 +1192,60 @@ class PDFViewer {
         const layer = document.getElementById('selection-layer');
         if (layer) {
             layer.querySelectorAll('.ocr-text-span').forEach(el => el.remove());
+        }
+    }
+
+    // ==================== Search ====================
+
+    setSearchHighlights(results) {
+        // results: [{page, rect: {x1,y1,x2,y2}}]
+        this.searchHighlights = {};
+        for (const r of results) {
+            if (!this.searchHighlights[r.page]) {
+                this.searchHighlights[r.page] = [];
+            }
+            this.searchHighlights[r.page].push(r.rect);
+        }
+
+        // Navigate to first result
+        const firstPage = results.length > 0 ? results[0].page : 0;
+        this.searchCurrentPage = firstPage;
+        if (firstPage && firstPage !== this.currentPage) {
+            this.goToPage(firstPage);
+        } else {
+            this.renderSearchHighlights();
+        }
+    }
+
+    renderSearchHighlights() {
+        const layer = document.getElementById('selection-layer');
+        if (!layer) return;
+
+        layer.querySelectorAll('.search-highlight').forEach(el => el.remove());
+
+        const rects = this.searchHighlights[this.currentPage];
+        if (!rects || !rects.length) return;
+
+        for (const pdfRect of rects) {
+            const screen = this.pdfToScreenCoords(pdfRect);
+            if (!screen) continue;
+
+            const el = document.createElement('div');
+            el.className = 'search-highlight';
+            el.style.left = `${screen.x1}px`;
+            el.style.top = `${screen.y1}px`;
+            el.style.width = `${screen.x2 - screen.x1}px`;
+            el.style.height = `${screen.y2 - screen.y1}px`;
+            layer.appendChild(el);
+        }
+    }
+
+    clearSearchHighlights() {
+        this.searchHighlights = {};
+        this.searchCurrentPage = 0;
+        const layer = document.getElementById('selection-layer');
+        if (layer) {
+            layer.querySelectorAll('.search-highlight').forEach(el => el.remove());
         }
     }
 }
