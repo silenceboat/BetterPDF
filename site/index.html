@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DeepRead AI - 智能 PDF 阅读器</title>
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg-primary: #0f1117;
+      --bg-secondary: #161b27;
+      --bg-card: #1a2035;
+      --bg-card-hover: #1f2845;
+      --accent: #6366f1;
+      --accent-light: #818cf8;
+      --accent-dim: rgba(99, 102, 241, 0.15);
+      --accent-glow: rgba(99, 102, 241, 0.35);
+      --text-primary: #f0f2ff;
+      --text-secondary: #8b93b8;
+      --text-muted: #4b5280;
+      --border: rgba(99, 102, 241, 0.2);
+      --border-subtle: rgba(255, 255, 255, 0.06);
+      --radius: 12px;
+      --radius-lg: 18px;
+      --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+      --shadow-accent: 0 0 40px rgba(99, 102, 241, 0.25);
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background-color: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.7;
+      overflow-x: hidden;
+    }
+
+    /* ─── Noise texture overlay ─── */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.5;
+    }
+
+    /* ─── Background gradient blobs ─── */
+    .bg-blobs {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      overflow: hidden;
+    }
+    .bg-blobs::before {
+      content: "";
+      position: absolute;
+      top: -20%;
+      left: -10%;
+      width: 60vw;
+      height: 60vw;
+      background: radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%);
+      border-radius: 50%;
+      animation: blobDrift 18s ease-in-out infinite alternate;
+    }
+    .bg-blobs::after {
+      content: "";
+      position: absolute;
+      bottom: -15%;
+      right: -10%;
+      width: 50vw;
+      height: 50vw;
+      background: radial-gradient(circle, rgba(139,92,246,0.10) 0%, transparent 70%);
+      border-radius: 50%;
+      animation: blobDrift 22s ease-in-out infinite alternate-reverse;
+    }
+    @keyframes blobDrift {
+      from { transform: translate(0, 0) scale(1); }
+      to   { transform: translate(4%, 6%) scale(1.08); }
+    }
+
+    /* ─── Layout wrapper ─── */
+    .wrapper {
+      position: relative;
+      z-index: 1;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ─── Nav ─── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(15, 17, 23, 0.75);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .nav-inner {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 24px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: var(--text-primary);
+      font-weight: 700;
+      font-size: 1.05rem;
+      letter-spacing: -0.3px;
+    }
+    .nav-logo {
+      width: 28px;
+      height: 28px;
+      background: linear-gradient(135deg, var(--accent), #a855f7);
+      border-radius: 7px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .nav-logo svg {
+      width: 16px;
+      height: 16px;
+      fill: #fff;
+    }
+    .nav-link {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      transition: color 0.2s;
+    }
+    .nav-link:hover { color: var(--accent-light); }
+    .nav-link svg { width: 18px; height: 18px; fill: currentColor; }
+
+    /* ─── Hero ─── */
+    .hero {
+      padding: 96px 0 72px;
+      text-align: center;
+    }
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--accent-dim);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 4px 14px;
+      font-size: 0.78rem;
+      color: var(--accent-light);
+      margin-bottom: 28px;
+      animation: fadeUp 0.5s ease both;
+    }
+    .badge-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent-light);
+      animation: pulse 2s ease infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.5; transform: scale(0.8); }
+    }
+    .hero h1 {
+      font-size: clamp(2.6rem, 6vw, 3.8rem);
+      font-weight: 800;
+      letter-spacing: -1.5px;
+      line-height: 1.1;
+      background: linear-gradient(135deg, #fff 30%, var(--accent-light) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 20px;
+      animation: fadeUp 0.5s ease 0.05s both;
+    }
+    .hero-subtitle {
+      font-size: clamp(1rem, 2.5vw, 1.2rem);
+      color: var(--text-secondary);
+      max-width: 500px;
+      margin: 0 auto 48px;
+      animation: fadeUp 0.5s ease 0.1s both;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(18px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ─── Release card ─── */
+    .release-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 32px;
+      margin: 0 auto 80px;
+      max-width: 680px;
+      box-shadow: var(--shadow), var(--shadow-accent);
+      animation: fadeUp 0.5s ease 0.15s both;
+      transition: border-color 0.3s;
+    }
+    .release-card:hover { border-color: rgba(99,102,241,0.4); }
+
+    .release-header {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .release-version {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: var(--accent-light);
+      letter-spacing: -0.5px;
+    }
+    .release-date {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      background: rgba(255,255,255,0.05);
+      padding: 2px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .release-notes {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin-bottom: 24px;
+      max-height: 220px;
+      overflow-y: auto;
+      line-height: 1.8;
+      scrollbar-width: thin;
+      scrollbar-color: var(--accent-dim) transparent;
+    }
+    .release-notes::-webkit-scrollbar { width: 4px; }
+    .release-notes::-webkit-scrollbar-track { background: transparent; }
+    .release-notes::-webkit-scrollbar-thumb { background: var(--accent-dim); border-radius: 4px; }
+    .release-notes h2, .release-notes h3 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 10px 0 4px;
+    }
+    .release-notes ul { padding-left: 18px; }
+    .release-notes li { margin: 2px 0; }
+    .release-notes p { margin: 4px 0; }
+
+    .download-buttons {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 11px 22px;
+      border-radius: var(--radius);
+      font-size: 0.92rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.22s ease;
+      border: none;
+      white-space: nowrap;
+    }
+    .btn svg { width: 17px; height: 17px; flex-shrink: 0; }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), #818cf8);
+      color: #fff;
+      box-shadow: 0 4px 18px rgba(99,102,241,0.4);
+    }
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 26px rgba(99,102,241,0.55);
+      filter: brightness(1.08);
+    }
+    .btn-primary:active { transform: translateY(0); }
+
+    .btn-secondary {
+      background: rgba(255,255,255,0.06);
+      color: var(--text-primary);
+      border: 1px solid var(--border-subtle);
+    }
+    .btn-secondary:hover {
+      background: rgba(255,255,255,0.1);
+      transform: translateY(-2px);
+      border-color: var(--border);
+    }
+    .btn-secondary:active { transform: translateY(0); }
+
+    /* skeleton loading state */
+    .skeleton {
+      border-radius: var(--radius);
+      background: linear-gradient(90deg,
+        rgba(255,255,255,0.04) 25%,
+        rgba(255,255,255,0.08) 50%,
+        rgba(255,255,255,0.04) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+    }
+    @keyframes shimmer {
+      0%   { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    .skeleton-line {
+      height: 14px;
+      margin-bottom: 10px;
+    }
+    .skeleton-line.w-40 { width: 40%; }
+    .skeleton-line.w-70 { width: 70%; }
+    .skeleton-line.w-90 { width: 90%; }
+    .skeleton-line.w-55 { width: 55%; }
+    .skeleton-btns {
+      display: flex;
+      gap: 12px;
+      margin-top: 20px;
+    }
+    .skeleton-btn {
+      height: 42px;
+      width: 160px;
+      border-radius: var(--radius);
+    }
+
+    .error-msg {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #f87171;
+      font-size: 0.9rem;
+      background: rgba(248,113,113,0.08);
+      border: 1px solid rgba(248,113,113,0.2);
+      border-radius: var(--radius);
+      padding: 14px 18px;
+    }
+    .error-msg svg { width: 18px; height: 18px; fill: #f87171; flex-shrink: 0; }
+    .error-msg a { color: #f87171; }
+
+    /* ─── Section labels ─── */
+    .section-label {
+      text-align: center;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--accent-light);
+      margin-bottom: 12px;
+    }
+    .section-title {
+      text-align: center;
+      font-size: clamp(1.6rem, 4vw, 2.2rem);
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: var(--text-primary);
+      margin-bottom: 12px;
+    }
+    .section-sub {
+      text-align: center;
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+      margin-bottom: 48px;
+    }
+
+    /* ─── Features ─── */
+    .features { padding: 0 0 96px; }
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 20px;
+    }
+    .feature-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 28px 24px;
+      transition: all 0.25s ease;
+      animation: fadeUp 0.5s ease both;
+    }
+    .feature-card:nth-child(1) { animation-delay: 0.05s; }
+    .feature-card:nth-child(2) { animation-delay: 0.12s; }
+    .feature-card:nth-child(3) { animation-delay: 0.19s; }
+    .feature-card:hover {
+      border-color: var(--border);
+      background: var(--bg-card-hover);
+      transform: translateY(-4px);
+      box-shadow: var(--shadow), 0 0 30px rgba(99,102,241,0.1);
+    }
+    .feature-icon {
+      width: 46px;
+      height: 46px;
+      background: var(--accent-dim);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 18px;
+    }
+    .feature-icon svg {
+      width: 22px;
+      height: 22px;
+      fill: var(--accent-light);
+    }
+    .feature-card h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 8px;
+      letter-spacing: -0.3px;
+    }
+    .feature-card p {
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      line-height: 1.7;
+    }
+
+    /* ─── Divider ─── */
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border-subtle);
+      margin: 0 0 80px;
+    }
+
+    /* ─── Footer ─── */
+    footer {
+      border-top: 1px solid var(--border-subtle);
+      padding: 32px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+    footer a {
+      color: var(--text-muted);
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: color 0.2s;
+    }
+    footer a:hover { color: var(--accent-light); }
+    footer svg { width: 18px; height: 18px; fill: currentColor; }
+    .footer-sep {
+      color: var(--border-subtle);
+    }
+  </style>
+</head>
+<body>
+
+<div class="bg-blobs" aria-hidden="true"></div>
+
+<!-- Nav -->
+<nav>
+  <div class="nav-inner">
+    <a class="nav-brand" href="#">
+      <div class="nav-logo">
+        <svg viewBox="0 0 20 20"><path d="M4 2a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V7.414A2 2 0 0017.414 6L14 2.586A2 2 0 0012.586 2H4zm8 1.5V7h3.5L12 3.5zM5 9h10v1H5V9zm0 3h10v1H5v-1zm0 3h6v1H5v-1z"/></svg>
+      </div>
+      DeepRead AI
+    </a>
+    <a class="nav-link" href="https://github.com/silenceboat/BetterPDF" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.38.6.11.82-.26.82-.58v-2.03c-3.34.72-4.04-1.61-4.04-1.61-.54-1.37-1.33-1.74-1.33-1.74-1.08-.74.08-.72.08-.72 1.2.08 1.83 1.23 1.83 1.23 1.06 1.82 2.79 1.29 3.47.99.11-.77.42-1.29.76-1.58-2.66-.3-5.46-1.33-5.46-5.93 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.52.12-3.17 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 013-.4c1.02 0 2.04.13 3 .4 2.28-1.55 3.29-1.23 3.29-1.23.66 1.65.24 2.87.12 3.17.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.82.58C20.56 21.8 24 17.3 24 12c0-6.63-5.37-12-12-12z"/></svg>
+      GitHub
+    </a>
+  </div>
+</nav>
+
+<!-- Hero -->
+<div class="wrapper">
+  <section class="hero">
+    <div class="hero-badge">
+      <span class="badge-dot"></span>
+      开源免费 · 本地运行 · 隐私优先
+    </div>
+    <h1>DeepRead AI</h1>
+    <p class="hero-subtitle">智能 PDF 阅读器，让文档理解更高效</p>
+  </section>
+
+  <!-- Release section -->
+  <div class="release-card" id="release-card">
+    <!-- populated by JS -->
+    <div id="release-loading">
+      <div class="skeleton skeleton-line w-40" style="margin-bottom:16px;"></div>
+      <div class="skeleton skeleton-line w-90"></div>
+      <div class="skeleton skeleton-line w-70"></div>
+      <div class="skeleton skeleton-line w-55"></div>
+      <div class="skeleton-btns">
+        <div class="skeleton skeleton-btn"></div>
+        <div class="skeleton skeleton-btn"></div>
+      </div>
+    </div>
+    <div id="release-content" style="display:none;"></div>
+    <div id="release-error" style="display:none;"></div>
+  </div>
+
+  <!-- Features -->
+  <section class="features">
+    <p class="section-label">核心功能</p>
+    <h2 class="section-title">一站式文档阅读体验</h2>
+    <p class="section-sub">从渲染到理解，每一步都经过精心设计</p>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">
+          <!-- PDF icon -->
+          <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM8 13h2.5c1.1 0 2 .9 2 2s-.9 2-2 2H9v2H8v-6zm1 1v2h1.5c.55 0 1-.45 1-1s-.45-1-1-1H9zm4 0h2c1.1 0 2 .9 2 2v1c0 1.1-.9 2-2 2h-2v-5zm1 1v3h1c.55 0 1-.45 1-1v-1c0-.55-.45-1-1-1h-1zm3 0h1.5v1H18v1h1.5v1H17v-3z"/></svg>
+        </div>
+        <h3>PDF 阅读</h3>
+        <p>高质量渲染，流畅翻页，支持文本选择与全文搜索，还原纸质阅读体验。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <!-- OCR / scan icon -->
+          <svg viewBox="0 0 24 24"><path d="M3 5h2V3H3v2zm0 8h2v-2H3v2zm4 8h2v-2H7v2zM3 9h2V7H3v2zm10-6h-2v2h2V3zm6 0v2h2V3h-2zm-2 0h-2v2h2V3zM5 21v-2H3v2h2zm6 0v-2h-2v2h2zm-2-8h2v-2H9v2zm8 4h2v-2h-2v2zm0 4h2v-2h-2v2zm0-8h2v-2h-2v2zm-4 4h2v-2h-2v2zm0 4h2v-2h-2v2zm-4-8h2v-2H9v2zm8-8v4h4V5h-4zm-1 3h2V6h-2v2zM3 13h4V9H3v4zm1-3h2v2H4v-2zm8-2h4v4h-4V8zm1 1v2h2V9h-2z"/></svg>
+        </div>
+        <h3>OCR 文字识别</h3>
+        <p>基于 PaddleOCR，支持扫描版 PDF 文字提取，精准识别中英文混排内容。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <!-- AI chat icon -->
+          <svg viewBox="0 0 24 24"><path d="M20 2H4a2 2 0 00-2 2v18l4-4h14a2 2 0 002-2V4a2 2 0 00-2-2zm-2 10H6v-2h12v2zm0-4H6V6h12v2z"/></svg>
+        </div>
+        <h3>AI 智能助手</h3>
+        <p>支持 OpenAI / Anthropic / Ollama，选中段落即可提问、摘要、翻译或解释。</p>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- Footer -->
+<footer>
+  <span>© 2025 DeepRead AI</span>
+  <span class="footer-sep">·</span>
+  <a href="https://github.com/silenceboat/BetterPDF" target="_blank" rel="noopener">
+    <svg viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.38.6.11.82-.26.82-.58v-2.03c-3.34.72-4.04-1.61-4.04-1.61-.54-1.37-1.33-1.74-1.33-1.74-1.08-.74.08-.72.08-.72 1.2.08 1.83 1.23 1.83 1.23 1.06 1.82 2.79 1.29 3.47.99.11-.77.42-1.29.76-1.58-2.66-.3-5.46-1.33-5.46-5.93 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.52.12-3.17 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 013-.4c1.02 0 2.04.13 3 .4 2.28-1.55 3.29-1.23 3.29-1.23.66 1.65.24 2.87.12 3.17.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.82.58C20.56 21.8 24 17.3 24 12c0-6.63-5.37-12-12-12z"/></svg>
+    silenceboat/BetterPDF
+  </a>
+</footer>
+
+<script>
+(function () {
+  // ── Tiny markdown renderer for release notes ──────────────────────────────
+  function renderMarkdown(text) {
+    if (!text) return '';
+
+    // Escape HTML entities
+    const escHtml = s => s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    const lines = text.split('\n');
+    const out = [];
+    let inList = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i];
+
+      // ATX headings
+      if (/^### (.+)/.test(line)) {
+        if (inList) { out.push('</ul>'); inList = false; }
+        out.push('<h3>' + escHtml(line.replace(/^### /, '')) + '</h3>');
+        continue;
+      }
+      if (/^## (.+)/.test(line)) {
+        if (inList) { out.push('</ul>'); inList = false; }
+        out.push('<h2>' + escHtml(line.replace(/^## /, '')) + '</h2>');
+        continue;
+      }
+      if (/^# (.+)/.test(line)) {
+        if (inList) { out.push('</ul>'); inList = false; }
+        out.push('<h2>' + escHtml(line.replace(/^# /, '')) + '</h2>');
+        continue;
+      }
+
+      // List items
+      if (/^[-*+] (.+)/.test(line)) {
+        if (!inList) { out.push('<ul>'); inList = true; }
+        const content = escHtml(line.replace(/^[-*+] /, ''));
+        out.push('<li>' + content + '</li>');
+        continue;
+      }
+
+      // End list if blank line or non-list content
+      if (inList && line.trim() !== '') {
+        out.push('</ul>');
+        inList = false;
+      }
+      if (inList && line.trim() === '') {
+        continue; // skip blank lines inside list
+      }
+
+      // Blank lines → paragraph break (just skip)
+      if (line.trim() === '') {
+        continue;
+      }
+
+      // Regular paragraph
+      const escaped = escHtml(line);
+      out.push('<p>' + escaped + '</p>');
+    }
+    if (inList) out.push('</ul>');
+    return out.join('\n');
+  }
+
+  // ── Date formatter ────────────────────────────────────────────────────────
+  function formatDate(iso) {
+    if (!iso) return '';
+    return iso.slice(0, 10); // YYYY-MM-DD
+  }
+
+  // ── Asset link helpers ────────────────────────────────────────────────────
+  function findAsset(assets, suffix) {
+    return assets.find(a =>
+      a.name.toLowerCase().endsWith(suffix.toLowerCase())
+    );
+  }
+
+  // ── SVG icons ─────────────────────────────────────────────────────────────
+  const downloadSvg = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>`;
+  const warnSvg = `<svg viewBox="0 0 24 24"><path d="M12 2L1 21h22L12 2zm0 3.5L20.5 19h-17L12 5.5zM11 10v4h2v-4h-2zm0 5v2h2v-2h-2z"/></svg>`;
+
+  // ── Render release content ────────────────────────────────────────────────
+  function renderRelease(data) {
+    const loadingEl = document.getElementById('release-loading');
+    const contentEl = document.getElementById('release-content');
+    const errorEl   = document.getElementById('release-error');
+
+    loadingEl.style.display = 'none';
+
+    const version  = data.tag_name || '—';
+    const date     = formatDate(data.published_at);
+    const notesHtml = renderMarkdown(data.body || '');
+    const assets   = Array.isArray(data.assets) ? data.assets : [];
+
+    const setupAsset    = findAsset(assets, '-setup.exe');
+    const portableAsset = findAsset(assets, '-portable.zip');
+
+    // Build download buttons HTML
+    let buttonsHtml = '';
+    if (setupAsset || portableAsset) {
+      buttonsHtml = '<div class="download-buttons">';
+      if (setupAsset) {
+        buttonsHtml += `
+          <a class="btn btn-primary" href="${setupAsset.browser_download_url}" download>
+            ${downloadSvg}
+            安装版 (Setup)
+          </a>`;
+      }
+      if (portableAsset) {
+        buttonsHtml += `
+          <a class="btn btn-secondary" href="${portableAsset.browser_download_url}" download>
+            ${downloadSvg}
+            便携版 (Portable)
+          </a>`;
+      }
+      buttonsHtml += '</div>';
+    } else {
+      // No matching assets, show link to releases page
+      buttonsHtml = `
+        <div class="download-buttons">
+          <a class="btn btn-primary" href="https://github.com/silenceboat/BetterPDF/releases" target="_blank" rel="noopener">
+            ${downloadSvg}
+            前往 GitHub Releases
+          </a>
+        </div>`;
+    }
+
+    contentEl.innerHTML = `
+      <div class="release-header">
+        <span class="release-version">${version}</span>
+        <span class="release-date">${date}</span>
+      </div>
+      ${notesHtml ? `<div class="release-notes">${notesHtml}</div>` : ''}
+      ${buttonsHtml}
+    `;
+    contentEl.style.display = 'block';
+  }
+
+  // ── Render error state ────────────────────────────────────────────────────
+  function renderError() {
+    const loadingEl = document.getElementById('release-loading');
+    const errorEl   = document.getElementById('release-error');
+
+    loadingEl.style.display = 'none';
+    errorEl.innerHTML = `
+      <div class="error-msg">
+        ${warnSvg}
+        <span>
+          获取发布信息失败，请访问
+          <a href="https://github.com/silenceboat/BetterPDF/releases" target="_blank" rel="noopener">
+            GitHub Releases
+          </a>
+          页面
+        </span>
+      </div>`;
+    errorEl.style.display = 'block';
+  }
+
+  // ── Fetch latest release ──────────────────────────────────────────────────
+  fetch('https://api.github.com/repos/silenceboat/BetterPDF/releases/latest', {
+    headers: { Accept: 'application/vnd.github+json' }
+  })
+    .then(res => {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    })
+    .then(data => renderRelease(data))
+    .catch(() => renderError());
+})();
+</script>
+</body>
+</html>

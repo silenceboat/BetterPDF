@@ -238,6 +238,21 @@ class DeepReadApp {
         } catch (error) {
             console.error('Failed to load app info:', error);
         }
+
+        // Check for updates in background (non-blocking)
+        API.checkForUpdates().then(result => {
+            if (result && result.update_available) {
+                const releaseLink = result.release_url
+                    ? `<a href="${result.release_url}" style="color:inherit;text-decoration:underline" target="_blank">v${result.latest_version}</a>`
+                    : `v${result.latest_version}`;
+                this.showToast(
+                    `新版本可用：${releaseLink}，点击右上角 × 关闭`,
+                    'info',
+                    0,
+                    { position: 'top-right' }
+                );
+            }
+        }).catch(() => {});
     }
 
     // ==================== Panel Management ====================

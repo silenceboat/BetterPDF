@@ -892,13 +892,69 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def _get_version(self) -> str:
+        """Read version from package metadata or pyproject.toml."""
+        try:
+            from importlib.metadata import version
+            return version("deepread-ai")
+        except Exception:
+            pass
+        try:
+            import pathlib
+            toml_path = pathlib.Path(__file__).parent.parent / "pyproject.toml"
+            for line in toml_path.read_text().splitlines():
+                if line.startswith("version"):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+        except Exception:
+            pass
+        return "0.1.0"
+
     def get_app_info(self) -> dict:
         """Get application information."""
         return {
             "name": "DeepRead AI",
-            "version": "0.2.0",
+            "version": self._get_version(),
             "platform": os.name,
         }
+
+    def check_for_updates(self) -> dict:
+        """Check GitHub releases for a newer version."""
+        import urllib.request
+        import json
+
+        try:
+            current_version = self._get_version()
+            url = "https://api.github.com/repos/silenceboat/BetterPDF/releases/latest"
+            req = urllib.request.Request(url, headers={"User-Agent": "DeepRead-AI"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
+
+            latest_tag = data.get("tag_name", "").lstrip("v")
+            release_url = data.get("html_url", "")
+
+            download_url = ""
+            for asset in data.get("assets", []):
+                if asset["name"].endswith("-setup.exe"):
+                    download_url = asset["browser_download_url"]
+                    break
+
+            def parse_ver(v):
+                return tuple(int(x) for x in v.split(".") if x.isdigit())
+
+            try:
+                update_available = parse_ver(latest_tag) > parse_ver(current_version)
+            except Exception:
+                update_available = False
+
+            return {
+                "update_available": update_available,
+                "latest_version": latest_tag,
+                "current_version": current_version,
+                "download_url": download_url,
+                "release_url": release_url,
+            }
+        except Exception:
+            return {"update_available": False}
 
     def _get_timestamp(self) -> str:
         """Get current timestamp string."""
