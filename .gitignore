@@ -215,6 +215,7 @@ Desktop.ini
 
 # Claude Code
 .claude/
+CLAUDE.md
 
 # Application specific
 *.pdf
