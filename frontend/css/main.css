@@ -1339,6 +1339,9 @@ body.is-resizing-panels .panel-splitter {
     color: var(--ink-secondary);
 }
 
+.message.ai > :first-child { margin-top: 0; }
+.message.ai > :last-child  { margin-bottom: 0; }
+
 .message.ai ul,
 .message.ai ol {
     margin: var(--space-sm) 0;

@@ -1121,17 +1121,19 @@ class AIChatPanel {
     }
 
     formatMessage(text) {
-        // Simple markdown formatting
+        // Full markdown rendering via marked.js
+        if (typeof marked !== 'undefined') {
+            const renderer = new marked.Renderer();
+            renderer.link = ({ href, text }) =>
+                `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
+            return marked.parse(text, { renderer, breaks: true });
+        }
+        // Fallback: basic formatting if marked.js not loaded
         return text
-            // Bold
             .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-            // Italic
             .replace(/\*(.+?)\*/g, '<em>$1</em>')
-            // Code
             .replace(/`(.+?)`/g, '<code>$1</code>')
-            // Links
             .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank">$1</a>')
-            // Line breaks
             .replace(/\n/g, '<br>');
     }
 
