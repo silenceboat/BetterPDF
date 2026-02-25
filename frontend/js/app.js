@@ -1252,13 +1252,13 @@ class SettingsPanel {
                 hint: 'Use this for OpenAI and OpenAI-compatible services like OpenRouter, Azure proxy, or self-hosted gateways.',
             },
             anthropic: {
-                label: 'Anthropic',
+                label: 'Anthropic Compatible',
                 model: 'claude-3-5-haiku-latest',
                 endpointPlaceholder: 'https://api.anthropic.com',
                 endpointLabel: 'API Origin',
                 keyLabel: 'Anthropic API Key',
                 keyPlaceholder: 'sk-ant-...',
-                hint: 'Uses Anthropic Messages API. If API Origin is empty, the app uses https://api.anthropic.com.',
+                hint: '支持 Anthropic 官方 API 及任何兼容 Anthropic Messages API 的第三方服务（代理、网关等）。留空 API Origin 则默认使用 https://api.anthropic.com。',
             },
             ollama: {
                 label: 'Ollama',
@@ -1295,7 +1295,7 @@ class SettingsPanel {
                             <span class="settings-field-label">Provider</span>
                             <select id="settings-ai-provider">
                                 <option value="openai">OpenAI Compatible</option>
-                                <option value="anthropic">Anthropic</option>
+                                <option value="anthropic">Anthropic Compatible</option>
                                 <option value="ollama">Ollama</option>
                             </select>
                         </label>
@@ -1322,8 +1322,8 @@ class SettingsPanel {
                     <p class="settings-provider-hint" id="settings-provider-hint"></p>
 
                     <div class="settings-actions">
-                        <button class="btn btn-primary" id="settings-ai-save-btn">Save Provider</button>
-                        <button class="btn btn-secondary" id="settings-ai-reset-btn">Reset Suggested Values</button>
+                        <button type="button" class="btn btn-primary" id="settings-ai-save-btn">Save Provider</button>
+                        <button type="button" class="btn btn-secondary" id="settings-ai-reset-btn">Reset Suggested Values</button>
                     </div>
                     <div class="settings-feedback" id="settings-ai-feedback"></div>
                 </section>
@@ -1336,52 +1336,67 @@ class SettingsPanel {
 
         this.bindEvents();
         this.loadProviderSettings();
+        console.log('[Settings] Panel rendered, events bound');
     }
 
     bindEvents() {
-        document.getElementById('settings-ai-save-btn')?.addEventListener('click', () => {
-            this.saveProviderSettings();
-        });
+        try {
+            const saveBtn = document.getElementById('settings-ai-save-btn');
+            if (saveBtn) {
+                saveBtn.addEventListener('click', () => {
+                    this.saveProviderSettings();
+                });
+            } else {
+                console.error('[Settings] Save button not found in DOM');
+            }
 
-        document.getElementById('settings-ai-reset-btn')?.addEventListener('click', () => {
-            const provider = this.getSelectedProvider();
-            const profile = this.getProviderProfile(provider);
+            const resetBtn = document.getElementById('settings-ai-reset-btn');
+            if (resetBtn) {
+                resetBtn.addEventListener('click', () => {
+                    const provider = this.getSelectedProvider();
+                    const profile = this.getProviderProfile(provider);
+                    const modelInput = document.getElementById('settings-ai-model');
+                    const urlInput = document.getElementById('settings-ai-base-url');
+                    const keyInput = document.getElementById('settings-ai-api-key');
+                    if (modelInput) modelInput.value = profile.model;
+                    if (urlInput) urlInput.value = '';
+                    if (keyInput) keyInput.value = '';
+                    this.applyProviderProfile(provider);
+                    this.setStatus(`${profile.label}: draft`, 'warning');
+                    this.setFeedback('Suggested defaults applied. Save to activate.', 'neutral');
+                });
+            } else {
+                console.error('[Settings] Reset button not found in DOM');
+            }
+
+            document.getElementById('settings-ai-toggle-key')?.addEventListener('click', () => {
+                const keyInput = document.getElementById('settings-ai-api-key');
+                const toggle = document.getElementById('settings-ai-toggle-key');
+                if (!keyInput || !toggle) return;
+                const toText = keyInput.type === 'password';
+                keyInput.type = toText ? 'text' : 'password';
+                toggle.textContent = toText ? 'Hide' : 'Show';
+            });
+
+            document.getElementById('settings-ai-provider')?.addEventListener('change', () => {
+                const provider = this.getSelectedProvider();
+                this.applyProviderProfile(provider, { forceModel: true });
+            });
+
             const modelInput = document.getElementById('settings-ai-model');
             const urlInput = document.getElementById('settings-ai-base-url');
             const keyInput = document.getElementById('settings-ai-api-key');
-            if (modelInput) modelInput.value = profile.model;
-            if (urlInput) urlInput.value = '';
-            if (keyInput) keyInput.value = '';
-            this.applyProviderProfile(provider);
-            this.setStatus(`${profile.label}: draft`, 'warning');
-            this.setFeedback('Suggested defaults applied. Save to activate.', 'neutral');
-        });
-
-        document.getElementById('settings-ai-toggle-key')?.addEventListener('click', () => {
-            const keyInput = document.getElementById('settings-ai-api-key');
-            const toggle = document.getElementById('settings-ai-toggle-key');
-            if (!keyInput || !toggle) return;
-            const toText = keyInput.type === 'password';
-            keyInput.type = toText ? 'text' : 'password';
-            toggle.textContent = toText ? 'Hide' : 'Show';
-        });
-
-        document.getElementById('settings-ai-provider')?.addEventListener('change', () => {
-            const provider = this.getSelectedProvider();
-            this.applyProviderProfile(provider, { forceModel: true });
-        });
-
-        const modelInput = document.getElementById('settings-ai-model');
-        const urlInput = document.getElementById('settings-ai-base-url');
-        const keyInput = document.getElementById('settings-ai-api-key');
-        [modelInput, urlInput, keyInput].forEach((input) => {
-            input?.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    this.saveProviderSettings();
-                }
+            [modelInput, urlInput, keyInput].forEach((input) => {
+                input?.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        this.saveProviderSettings();
+                    }
+                });
             });
-        });
+        } catch (err) {
+            console.error('[Settings] Failed to bind events:', err);
+        }
     }
 
     getProviderProfile(provider) {
@@ -1475,34 +1490,46 @@ class SettingsPanel {
     }
 
     async saveProviderSettings() {
-        const provider = this.getSelectedProvider();
-        const profile = this.getProviderProfile(provider);
-        const modelInput = document.getElementById('settings-ai-model');
-        const urlInput = document.getElementById('settings-ai-base-url');
-        const keyInput = document.getElementById('settings-ai-api-key');
-        const saveBtn = document.getElementById('settings-ai-save-btn');
-        const resetBtn = document.getElementById('settings-ai-reset-btn');
-
-        const payload = {
-            provider,
-            model: modelInput?.value?.trim() || profile.model,
-            base_url: urlInput?.value?.trim() || '',
-            api_key: keyInput?.value?.trim() || ''
-        };
-
-        if (saveBtn) {
-            saveBtn.disabled = true;
-            saveBtn.textContent = 'Saving...';
-        }
-        if (resetBtn) {
-            resetBtn.disabled = true;
-        }
-
         try {
+            const provider = this.getSelectedProvider();
+            const profile = this.getProviderProfile(provider);
+            const modelInput = document.getElementById('settings-ai-model');
+            const urlInput = document.getElementById('settings-ai-base-url');
+            const keyInput = document.getElementById('settings-ai-api-key');
+            const saveBtn = document.getElementById('settings-ai-save-btn');
+            const resetBtn = document.getElementById('settings-ai-reset-btn');
+
+            const payload = {
+                provider,
+                model: modelInput?.value?.trim() || profile.model,
+                base_url: urlInput?.value?.trim() || '',
+                api_key: keyInput?.value?.trim() || ''
+            };
+
+            // Front-end pre-validation: require API key for OpenAI/Anthropic
+            if ((provider === 'openai' || provider === 'anthropic') && !payload.api_key) {
+                const msg = `${profile.label} requires an API key.`;
+                this.setStatus('Validation error', 'error');
+                this.setFeedback(msg, 'error');
+                window.app?.showToast(msg, 'error');
+                this.scrollToFeedback();
+                return;
+            }
+
+            if (saveBtn) {
+                saveBtn.disabled = true;
+                saveBtn.textContent = 'Saving...';
+            }
+            if (resetBtn) {
+                resetBtn.disabled = true;
+            }
+
             const result = await API.saveAiSettings(payload);
             if (!result.success) {
                 this.setStatus('Save failed', 'error');
                 this.setFeedback(result.error || 'Failed to save provider settings.', 'error');
+                window.app?.showToast(result.error || 'Save failed', 'error');
+                this.scrollToFeedback();
                 return;
             }
 
@@ -1524,10 +1551,8 @@ class SettingsPanel {
             this.applyProviderProfile(savedProvider);
             window.app?.aiPanel?.refreshProviderStatus();
             window.app?.showToast(`${savedProfile.label} settings saved`, 'success', 1600);
-        } catch (error) {
-            this.setStatus('Save failed', 'error');
-            this.setFeedback(error?.message || 'Failed to save provider settings.', 'error');
-        } finally {
+            this.scrollToFeedback();
+
             if (saveBtn) {
                 saveBtn.disabled = false;
                 saveBtn.textContent = 'Save Provider';
@@ -1535,6 +1560,29 @@ class SettingsPanel {
             if (resetBtn) {
                 resetBtn.disabled = false;
             }
+        } catch (error) {
+            console.error('[Settings] Save failed:', error);
+            this.setStatus('Save failed', 'error');
+            this.setFeedback(error?.message || 'Failed to save provider settings.', 'error');
+            window.app?.showToast(error?.message || 'Save failed', 'error');
+            this.scrollToFeedback();
+
+            const saveBtn = document.getElementById('settings-ai-save-btn');
+            const resetBtn = document.getElementById('settings-ai-reset-btn');
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save Provider';
+            }
+            if (resetBtn) {
+                resetBtn.disabled = false;
+            }
+        }
+    }
+
+    scrollToFeedback() {
+        const feedbackEl = document.getElementById('settings-ai-feedback');
+        if (feedbackEl) {
+            feedbackEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
     }
 }
