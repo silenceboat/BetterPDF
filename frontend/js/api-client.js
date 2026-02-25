@@ -371,7 +371,7 @@ const API = {
      */
     async getAppInfo() {
         return this.call('get_app_info');
-    }
+    },
 
     async checkForUpdates() {
         return this.call('check_for_updates');
