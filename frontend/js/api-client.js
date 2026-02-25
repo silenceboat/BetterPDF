@@ -378,6 +378,9 @@ const API = {
     }
 };
 
+// Ensure API is available globally (some WebView engines may isolate const scope)
+window.API = API;
+
 // Export for module systems
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = API;
