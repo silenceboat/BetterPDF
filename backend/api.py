@@ -12,7 +12,7 @@ import time
 
 from .pdf_engine import PDFEngine
 from .engine_factory import create_engine
-from .ai_service import AIService
+from .ai import AIService
 from .persistence import PersistenceStore
 
 
@@ -709,6 +709,24 @@ class DeepReadAPI:
                 "success": False,
                 "error": str(e),
             }
+
+    def ai_note_assist(self, action: str, note_content: str = "", quote: str = "") -> dict:
+        """
+        Apply an AI action to a page note.
+
+        Args:
+            action: Action type (improve, expand, translate, summarize)
+            note_content: Current note text
+            quote: The quoted excerpt the note is attached to
+
+        Returns:
+            Dict with success status and AI-improved note text
+        """
+        try:
+            response = self.ai_service.note_assist(note_content, quote, action)
+            return {"success": True, "response": response}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     # ==================== Note Operations ====================
 

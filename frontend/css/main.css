@@ -2243,6 +2243,94 @@ body.pdf-focus-mode .toast-container-top {
     }
 }
 
+/* ==================== AI-Notes Integration ==================== */
+
+.page-note-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.page-note-ai-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--ink-muted);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    transition: all var(--transition-fast);
+}
+
+.page-note-ai-btn:hover {
+    color: var(--accent-primary);
+    border-color: var(--accent-glow);
+    background: var(--accent-subtle);
+}
+
+.ai-message-actions {
+    display: flex;
+    gap: var(--space-sm);
+    margin-top: var(--space-sm);
+    padding-top: var(--space-sm);
+    border-top: 1px solid var(--border-subtle);
+}
+
+.btn-save-as-note {
+    font-size: 12px;
+    font-family: var(--font-mono);
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--ink-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.btn-save-as-note:hover {
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+    background: var(--accent-subtle);
+}
+
+/* AI Assist dropdown menu */
+.ai-assist-menu {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: var(--shadow-lg);
+    padding: 4px;
+    min-width: 180px;
+    animation: fadeInDown 0.12s ease;
+}
+
+@keyframes fadeInDown {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.ai-assist-menu-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    color: var(--ink-secondary);
+    font-size: 13px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.ai-assist-menu-item:hover {
+    background: var(--accent-subtle);
+    color: var(--accent-primary);
+}
+
 /* ==================== Icon Font ==================== */
 /* Using inline SVG for icons instead of emoji */
 .icon-search::before {

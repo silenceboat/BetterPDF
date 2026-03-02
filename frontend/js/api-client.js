@@ -142,6 +142,10 @@ const API = {
             }),
             delete_page_note: () => ({
                 success: true
+            }),
+            ai_note_assist: () => ({
+                success: true,
+                response: 'Mock improved note: ' + (args[1] || 'note content')
             })
         };
 
@@ -322,6 +326,17 @@ const API = {
      */
     async aiQuickAction(actionType, documentContext = '') {
         return this.call('ai_quick_action', actionType, documentContext);
+    },
+
+    /**
+     * Apply an AI action to a page note
+     * @param {string} action - Action type (improve, expand, translate, summarize)
+     * @param {string} noteContent - Current note text
+     * @param {string} quote - Quoted excerpt the note is attached to
+     * @returns {Promise<{success: boolean, response?: string}>}
+     */
+    async aiNoteAssist(action, noteContent, quote = '') {
+        return this.call('ai_note_assist', action, noteContent, quote);
     },
 
     // ==================== Note Operations ====================

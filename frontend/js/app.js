@@ -799,6 +799,48 @@ class DeepReadApp {
         return this.pageNotes.get(page) || [];
     }
 
+    getNotesContextForPage(page) {
+        const notes = this.getPageNotesForPage(page);
+        if (!notes.length) return '';
+        const lines = notes.map((n, i) => {
+            const quote = n.quote ? `Quote: "${n.quote.slice(0, 120)}"` : '';
+            const note = n.note ? `Note: "${n.note.slice(0, 200)}"` : '';
+            return `[${i + 1}] ${[quote, note].filter(Boolean).join(' | ')}`;
+        });
+        return `Current page notes:\n${lines.join('\n')}`;
+    }
+
+    createNoteFromAiResponse(text) {
+        const page = this.pdfViewer?.getCurrentPage();
+        if (!Number.isFinite(page) || page < 1) {
+            this.showToast('Open a document first', 'warning');
+            return;
+        }
+        if (!text?.trim()) return;
+
+        const now = new Date().toISOString();
+        const quote = text.slice(0, 200);
+        const note = {
+            id: this.createPageNoteId(),
+            page,
+            quote,
+            note: text,
+            rectPdf: { x1: 0, y1: 0, x2: 0, y2: 0 },
+            createdAt: now,
+            updatedAt: now
+        };
+
+        const pageNotes = this.pageNotes.get(page) || [];
+        pageNotes.unshift(note);
+        this.pageNotes.set(page, pageNotes);
+
+        this.notesPanel.setActivePage(page, { render: false, preserveActive: false });
+        this.switchPanel('notes');
+        this.notesPanel.setActiveNote(note.id, { focusPdf: false });
+        this.schedulePersistPageNotes();
+        this.showToast(`AI response saved to page ${page} notes`, 'success', 1800);
+    }
+
     getTotalPageNotes() {
         let total = 0;
         this.pageNotes.forEach((notes) => {
@@ -1069,9 +1111,22 @@ class AIChatPanel {
 
     buildChatContext() {
         const context = this.pendingSelectionContext;
-        if (!context?.selectedText) return '';
-        const pageLabel = context.page ? `Page ${context.page}` : 'Page unknown';
-        return `${pageLabel}\n<selected_text>\n${context.selectedText}\n</selected_text>`;
+        const parts = [];
+
+        if (context?.selectedText) {
+            const pageLabel = context.page ? `Page ${context.page}` : 'Page unknown';
+            parts.push(`${pageLabel}\n<selected_text>\n${context.selectedText}\n</selected_text>`);
+        }
+
+        const currentPage = window.app?.pdfViewer?.getCurrentPage();
+        if (currentPage) {
+            const notesContext = window.app?.getNotesContextForPage(currentPage);
+            if (notesContext) {
+                parts.push(notesContext);
+            }
+        }
+
+        return parts.join('\n\n');
     }
 
     async sendMessage() {
@@ -1081,14 +1136,19 @@ class AIChatPanel {
         if (!message || this.isProcessing) return;
 
         const contextText = this.buildChatContext();
-        const hasSelectionContext = !!contextText;
+        const hasSelectionContext = !!this.pendingSelectionContext?.selectedText;
         this.addUserMessage(hasSelectionContext ? `[Selected excerpt] ${message}` : message);
         input.value = '';
         input.style.height = '44px';
 
-        const success = await this.processAiChat(message, contextText);
-        if (success && hasSelectionContext) {
+        const saveIntent = /save.*note|add.*note|保存.*笔记|存.*笔记/i.test(message);
+
+        const result = await this.processAiChat(message, contextText);
+        if (result && hasSelectionContext) {
             this.clearPendingSelectionContext();
+        }
+        if (saveIntent && result?.response) {
+            window.app?.createNoteFromAiResponse(result.response);
         }
     }
 
@@ -1110,6 +1170,18 @@ class AIChatPanel {
         if (role === 'ai') {
             // Render markdown-like formatting
             message.innerHTML = this.formatMessage(text);
+
+            // Append "Save to Notes" action button
+            const actions = document.createElement('div');
+            actions.className = 'ai-message-actions';
+            const saveBtn = document.createElement('button');
+            saveBtn.className = 'btn-save-as-note';
+            saveBtn.textContent = '\u2295 Save to Notes';
+            saveBtn.addEventListener('click', () => {
+                window.app?.createNoteFromAiResponse(text);
+            });
+            actions.appendChild(saveBtn);
+            message.appendChild(actions);
         } else {
             message.textContent = text;
         }
@@ -1156,7 +1228,7 @@ class AIChatPanel {
     }
 
     async processAiChat(message, context = '') {
-        if (this.isProcessing) return false;
+        if (this.isProcessing) return null;
 
         this.isProcessing = true;
         this.showTypingIndicator();
@@ -1168,7 +1240,7 @@ class AIChatPanel {
 
             if (result.success) {
                 this.addAiMessage(result.response);
-                return true;
+                return result;
             } else {
                 this.addAiMessage(`Error: ${result.error || 'Failed to get response'}`);
             }
@@ -1178,7 +1250,7 @@ class AIChatPanel {
         } finally {
             this.isProcessing = false;
         }
-        return false;
+        return null;
     }
 
     async processAiAction(action, selectedText) {
@@ -1626,6 +1698,7 @@ class NotesPanel {
         document.querySelectorAll('.page-note-card').forEach(card => {
             card.addEventListener('click', (event) => {
                 if (event.target.closest('.page-note-delete')) return;
+                if (event.target.closest('.page-note-ai-btn')) return;
                 this.setActiveNote(card.dataset.noteId, { focusPdf: true });
             });
         });
@@ -1634,6 +1707,13 @@ class NotesPanel {
             btn.addEventListener('click', (event) => {
                 event.stopPropagation();
                 this.deleteNote(btn.dataset.noteId);
+            });
+        });
+
+        document.querySelectorAll('.page-note-ai-btn').forEach(btn => {
+            btn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.showAiAssistMenu(btn.dataset.noteId, btn);
             });
         });
 
@@ -1675,9 +1755,10 @@ class NotesPanel {
             <article class="page-note-card${isActive}" data-note-id="${this.escapeHtml(note.id)}">
                 <div class="page-note-card-head">
                     <span class="page-note-chip">${label}</span>
-                    <button class="page-note-delete" data-note-id="${this.escapeHtml(note.id)}" title="Delete note" aria-label="Delete note">
-                        ×
-                    </button>
+                    <div class="page-note-card-actions">
+                        <button class="page-note-ai-btn" data-note-id="${this.escapeHtml(note.id)}" title="AI Assist" aria-label="AI Assist">✨</button>
+                        <button class="page-note-delete" data-note-id="${this.escapeHtml(note.id)}" title="Delete note" aria-label="Delete note">×</button>
+                    </div>
                 </div>
                 <blockquote class="page-note-quote">${quote}</blockquote>
                 <label class="page-note-label" for="note-input-${this.escapeHtml(note.id)}">Your note</label>
@@ -1769,6 +1850,94 @@ class NotesPanel {
         app.pdfViewer?.clearNoteFocus();
         if (app.currentPanel === 'notes') {
             this.render(document.getElementById('panel-content'));
+        }
+    }
+
+    showAiAssistMenu(noteId, anchor) {
+        // Remove any existing AI assist menus
+        document.querySelectorAll('.ai-assist-menu').forEach(el => el.remove());
+
+        const actions = [
+            { key: 'improve', label: 'Improve' },
+            { key: 'expand', label: 'Expand' },
+            { key: 'translate', label: 'Translate to Chinese' },
+            { key: 'summarize', label: 'Summarize' },
+        ];
+
+        const menu = document.createElement('div');
+        menu.className = 'ai-assist-menu';
+        menu.setAttribute('role', 'menu');
+
+        actions.forEach(({ key, label }) => {
+            const item = document.createElement('button');
+            item.className = 'ai-assist-menu-item';
+            item.textContent = label;
+            item.setAttribute('role', 'menuitem');
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                menu.remove();
+                this.applyAiAssist(noteId, key);
+            });
+            menu.appendChild(item);
+        });
+
+        const rect = anchor.getBoundingClientRect();
+        menu.style.position = 'fixed';
+        menu.style.top = `${rect.bottom + 4}px`;
+        menu.style.left = `${rect.left}px`;
+        menu.style.zIndex = '9999';
+        document.body.appendChild(menu);
+
+        const closeOnOutside = (e) => {
+            if (!menu.contains(e.target)) {
+                menu.remove();
+                document.removeEventListener('click', closeOnOutside, true);
+            }
+        };
+        setTimeout(() => {
+            document.addEventListener('click', closeOnOutside, true);
+        }, 0);
+    }
+
+    async applyAiAssist(noteId, action) {
+        const note = this.findActivePageNote(noteId);
+        if (!note) return;
+
+        const textarea = document.getElementById(`note-input-${noteId}`);
+        if (textarea) {
+            textarea.disabled = true;
+            textarea.style.opacity = '0.6';
+        }
+
+        try {
+            const result = await API.aiNoteAssist(action, note.note || '', note.quote || '');
+            if (!result.success) {
+                window.app?.showToast(result.error || 'AI assist failed', 'error');
+                return;
+            }
+
+            const updatedAt = new Date().toISOString();
+            note.note = result.response;
+            note.updatedAt = updatedAt;
+
+            if (textarea) {
+                textarea.value = result.response;
+                const card = textarea.closest('.page-note-card');
+                const timeEl = card?.querySelector('.page-note-time');
+                if (timeEl) {
+                    timeEl.textContent = `Updated ${this.formatTime(updatedAt)}`;
+                }
+            }
+
+            window.app?.schedulePersistPageNotes();
+            window.app?.showToast('Note updated by AI', 'success', 1800);
+        } catch (err) {
+            window.app?.showToast('AI assist failed', 'error');
+        } finally {
+            if (textarea) {
+                textarea.disabled = false;
+                textarea.style.opacity = '';
+            }
         }
     }
 
