@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import zlib
 import sys
 import threading
 from datetime import datetime, timezone
@@ -107,6 +108,25 @@ class PersistenceStore:
             )
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_page_notes_file_updated ON page_notes(file_path, updated_at DESC)"
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ocr_cache (
+                    fingerprint      TEXT    NOT NULL,
+                    page_num         INTEGER NOT NULL,
+                    ocr_data         BLOB    NOT NULL,
+                    line_count       INTEGER NOT NULL DEFAULT 0,
+                    created_at       TEXT    NOT NULL,
+                    last_accessed_at TEXT    NOT NULL,
+                    PRIMARY KEY (fingerprint, page_num)
+                )
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ocr_cache_fp ON ocr_cache (fingerprint)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ocr_cache_lru ON ocr_cache (last_accessed_at ASC)"
             )
 
             self._ensure_columns(
@@ -446,3 +466,117 @@ class PersistenceStore:
             ),
             "model": str(payload.get("model") or "").strip() or "gpt-4o-mini",
         }
+
+    # ==================== OCR Cache ====================
+
+    def save_ocr_page(self, fingerprint: str, page_num: int, lines: list) -> None:
+        """Persist OCR result for a single page (compressed)."""
+        now = _utc_now_iso()
+        blob = zlib.compress(json.dumps(lines, separators=(",", ":")).encode())
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO ocr_cache (fingerprint, page_num, ocr_data, line_count, created_at, last_accessed_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(fingerprint, page_num) DO UPDATE SET
+                    ocr_data         = excluded.ocr_data,
+                    line_count       = excluded.line_count,
+                    last_accessed_at = excluded.last_accessed_at
+                """,
+                (fingerprint, page_num, blob, len(lines), now, now),
+            )
+            self._conn.commit()
+
+    def load_ocr_page(self, fingerprint: str, page_num: int) -> list | None:
+        """Load OCR result for a single page. Returns None if not cached."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT ocr_data FROM ocr_cache WHERE fingerprint = ? AND page_num = ?",
+                (fingerprint, page_num),
+            ).fetchone()
+
+        if not row:
+            return None
+
+        now = _utc_now_iso()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE ocr_cache SET last_accessed_at = ? WHERE fingerprint = ? AND page_num = ?",
+                (now, fingerprint, page_num),
+            )
+            self._conn.commit()
+
+        try:
+            return json.loads(zlib.decompress(row["ocr_data"]))
+        except Exception:
+            with self._lock:
+                self._conn.execute(
+                    "DELETE FROM ocr_cache WHERE fingerprint = ? AND page_num = ?",
+                    (fingerprint, page_num),
+                )
+                self._conn.commit()
+            return None
+
+    def load_ocr_document(self, fingerprint: str) -> dict[int, list]:
+        """Load all cached OCR pages for a document. Returns {page_num: lines}."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT page_num, ocr_data FROM ocr_cache WHERE fingerprint = ? ORDER BY page_num",
+                (fingerprint,),
+            ).fetchall()
+
+        if not rows:
+            return {}
+
+        now = _utc_now_iso()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE ocr_cache SET last_accessed_at = ? WHERE fingerprint = ?",
+                (now, fingerprint),
+            )
+            self._conn.commit()
+
+        result: dict[int, list] = {}
+        for row in rows:
+            try:
+                result[row["page_num"]] = json.loads(zlib.decompress(row["ocr_data"]))
+            except Exception:
+                continue
+        return result
+
+    def evict_old_ocr(self, max_documents: int = 30) -> int:
+        """Remove least-recently-used documents from ocr_cache. Returns number of documents evicted."""
+        with self._lock:
+            total_row = self._conn.execute(
+                "SELECT COUNT(DISTINCT fingerprint) AS cnt FROM ocr_cache"
+            ).fetchone()
+            total = total_row["cnt"] if total_row else 0
+
+            if total <= max_documents:
+                return 0
+
+            evict_count = total - max_documents
+            to_evict = [
+                r["fingerprint"]
+                for r in self._conn.execute(
+                    """
+                    SELECT fingerprint
+                    FROM ocr_cache
+                    GROUP BY fingerprint
+                    ORDER BY MAX(last_accessed_at) ASC
+                    LIMIT ?
+                    """,
+                    (evict_count,),
+                ).fetchall()
+            ]
+
+            if not to_evict:
+                return 0
+
+            placeholders = ",".join("?" for _ in to_evict)
+            self._conn.execute(
+                f"DELETE FROM ocr_cache WHERE fingerprint IN ({placeholders})",
+                to_evict,
+            )
+            self._conn.commit()
+            return len(to_evict)

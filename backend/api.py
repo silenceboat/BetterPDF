@@ -2,6 +2,7 @@
 PyWebView API Bridge - Exposes Python backend to JavaScript frontend.
 """
 
+import hashlib
 import os
 import tempfile
 import shutil
@@ -35,6 +36,7 @@ class DeepReadAPI:
         # OCR state
         self._ocr_pipeline = None
         self._ocr_cache: dict = {}  # page_num -> simplified lines
+        self._ocr_fingerprint: Optional[str] = None
         self._ocr_temp_dir: Optional[str] = None
         self._ocr_job_id = 0
         self._ocr_progress_lock = threading.Lock()
@@ -67,6 +69,14 @@ class DeepReadAPI:
     def _normalize_file_path(file_path: str) -> str:
         return os.path.abspath(os.path.expanduser(file_path))
 
+    @staticmethod
+    def _compute_file_fingerprint(file_path: str) -> str:
+        size = os.path.getsize(file_path)
+        with open(file_path, "rb") as f:
+            head = f.read(8192)
+        digest = hashlib.sha256(head).hexdigest()[:16]
+        return f"{digest}:{size}"
+
     # ==================== PDF Operations ====================
 
     def open_pdf(self, file_path: str) -> dict:
@@ -89,6 +99,20 @@ class DeepReadAPI:
 
             self.pdf_engine = create_engine(normalized_path)
             self.current_pdf_path = normalized_path
+
+            # 计算文件指纹，预加载 OCR 缓存
+            try:
+                self._ocr_fingerprint = self._compute_file_fingerprint(normalized_path)
+            except Exception:
+                self._ocr_fingerprint = None
+
+            if self._persistence and self._ocr_fingerprint:
+                try:
+                    cached = self._persistence.load_ocr_document(self._ocr_fingerprint)
+                    if cached:
+                        self._ocr_cache.update(cached)
+                except Exception:
+                    pass
 
             metadata = self.pdf_engine.get_metadata()
             session_state = {
@@ -311,6 +335,7 @@ class DeepReadAPI:
                 "total_lines": 0,
                 "error": "",
             }
+        self._ocr_fingerprint = None
 
     def _ensure_ocr_pipeline(self):
         """Lazy-init OCR pipeline."""
@@ -397,6 +422,14 @@ class DeepReadAPI:
                 simplified = self._simplify_ocr_lines(page_lines)
                 self._ocr_cache[page_num] = simplified
 
+                if self._persistence and self._ocr_fingerprint:
+                    try:
+                        self._persistence.save_ocr_page(
+                            self._ocr_fingerprint, page_num, simplified
+                        )
+                    except Exception:
+                        pass
+
                 processed_pages += 1
                 total_lines += len(simplified)
                 self._update_ocr_progress(
@@ -418,6 +451,11 @@ class DeepReadAPI:
                     total_lines=total_lines,
                     error="",
                 )
+                if self._persistence and self._ocr_fingerprint:
+                    try:
+                        self._persistence.evict_old_ocr(max_documents=30)
+                    except Exception:
+                        pass
         except Exception as e:
             if job_id == self._ocr_job_id:
                 self._update_ocr_progress(
@@ -463,6 +501,16 @@ class DeepReadAPI:
 
             # Cache and return
             self._ocr_cache[page_num] = simplified
+
+            if self._persistence and self._ocr_fingerprint:
+                try:
+                    self._persistence.save_ocr_page(
+                        self._ocr_fingerprint, page_num, simplified
+                    )
+                    self._persistence.evict_old_ocr(max_documents=30)
+                except Exception:
+                    pass
+
             return {"success": True, "lines": simplified}
 
         except Exception as e:
