@@ -754,7 +754,10 @@ class DeepReadApp {
 
         this.notesPanel.setActivePage(page, { render: false, preserveActive: false });
         this.switchPanel('notes');
-        this.notesPanel.setActiveNote(note.id, { focusPdf: true });
+        this.notesPanel.activeNoteId = note.id;
+        this.notesPanel.editingNoteId = note.id;
+        this.notesPanel.render(document.getElementById('panel-content'));
+        window.app?.focusPageNote(note);
         this.schedulePersistPageNotes();
         this.showToast(`Added note to page ${page}`, 'success', 1800);
     }
@@ -1669,9 +1672,18 @@ class NotesPanel {
         this.containerId = containerId;
         this.activePage = 1;
         this.activeNoteId = '';
+        this.editingNoteId = null;
     }
 
     render(container) {
+        if (this.editingNoteId !== null) {
+            this._renderEditorView(container, this.editingNoteId);
+            return;
+        }
+        this._renderListView(container);
+    }
+
+    _renderListView(container) {
         const notes = this.getActivePageNotes();
         const noteCount = notes.length;
         const countLabel = `${noteCount} ${noteCount === 1 ? 'note' : 'notes'}`;
@@ -1694,12 +1706,62 @@ class NotesPanel {
         this.bindEvents();
     }
 
+    _renderEditorView(container, noteId) {
+        const notes = this.getActivePageNotes();
+        const noteIndex = notes.findIndex(n => n.id === noteId);
+        const note = notes[noteIndex];
+        if (!note) {
+            this.editingNoteId = null;
+            this._renderListView(container);
+            return;
+        }
+
+        const label = `Excerpt ${String(noteIndex + 1).padStart(2, '0')}`;
+        const noteText = this.escapeHtml(note.note || '');
+        const quote = this.escapeHtml(String(note.quote || '').replace(/\s+/g, ' ').trim());
+        const updated = this.formatTime(note.updatedAt || note.createdAt);
+
+        container.innerHTML = `
+            <div class="note-editor-panel">
+                <div class="note-editor-header">
+                    <button class="note-editor-back" aria-label="Back to notes list">← Notes</button>
+                    <div class="note-editor-meta">
+                        <span class="page-note-chip">${label}</span>
+                        <span class="note-editor-page-label">Page ${note.page}</span>
+                    </div>
+                    <div class="note-editor-actions">
+                        <button class="page-note-ai-btn note-editor-ai-btn" data-note-id="${this.escapeHtml(note.id)}" title="AI Assist" aria-label="AI Assist">✨</button>
+                        <button class="page-note-delete note-editor-delete-btn" data-note-id="${this.escapeHtml(note.id)}" title="Delete note" aria-label="Delete note">×</button>
+                    </div>
+                </div>
+                <blockquote class="note-editor-quote">${quote}</blockquote>
+                <div class="note-editor-body">
+                    <textarea class="note-editor-textarea" data-note-id="${this.escapeHtml(note.id)}" placeholder="在这里记录你的想法...">${noteText}</textarea>
+                </div>
+                <div class="note-editor-footer">
+                    <span class="note-editor-time" id="note-editor-time">Updated ${updated}</span>
+                    <span class="note-editor-save-status" id="note-editor-save-status"></span>
+                </div>
+            </div>
+        `;
+
+        this._bindEditorEvents(container, note);
+        // Auto-focus textarea
+        const textarea = container.querySelector('.note-editor-textarea');
+        if (textarea) {
+            textarea.focus();
+            textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+        }
+    }
+
     bindEvents() {
         document.querySelectorAll('.page-note-card').forEach(card => {
             card.addEventListener('click', (event) => {
                 if (event.target.closest('.page-note-delete')) return;
                 if (event.target.closest('.page-note-ai-btn')) return;
-                this.setActiveNote(card.dataset.noteId, { focusPdf: true });
+                const noteId = card.dataset.noteId;
+                this.setActiveNote(noteId, { focusPdf: true });
+                this.enterEditMode(noteId);
             });
         });
 
@@ -1713,26 +1775,58 @@ class NotesPanel {
         document.querySelectorAll('.page-note-ai-btn').forEach(btn => {
             btn.addEventListener('click', (event) => {
                 event.stopPropagation();
-                this.showAiAssistMenu(btn.dataset.noteId, btn);
-            });
-        });
-
-        document.querySelectorAll('.page-note-input').forEach(textarea => {
-            const noteId = textarea.dataset.noteId;
-            textarea.addEventListener('focus', () => {
+                const noteId = btn.dataset.noteId;
                 this.setActiveNote(noteId, { focusPdf: true });
-            });
-            textarea.addEventListener('input', (event) => {
-                const updatedAt = this.handleNoteInput(noteId, event.target.value);
-                const card = event.target.closest('.page-note-card');
-                const timeEl = card?.querySelector('.page-note-time');
-                if (timeEl && updatedAt) {
-                    timeEl.textContent = `Updated ${this.formatTime(updatedAt)}`;
-                }
+                this.enterEditMode(noteId);
             });
         });
 
         this.updateActiveCardStyles();
+    }
+
+    _bindEditorEvents(container, note) {
+        const noteId = note.id;
+
+        const backBtn = container.querySelector('.note-editor-back');
+        if (backBtn) {
+            backBtn.addEventListener('click', () => this.exitEditMode());
+        }
+
+        const deleteBtn = container.querySelector('.note-editor-delete-btn');
+        if (deleteBtn) {
+            deleteBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.deleteNote(noteId);
+            });
+        }
+
+        const aiBtn = container.querySelector('.note-editor-ai-btn');
+        if (aiBtn) {
+            aiBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.showAiAssistMenu(noteId, aiBtn);
+            });
+        }
+
+        const textarea = container.querySelector('.note-editor-textarea');
+        if (textarea) {
+            textarea.addEventListener('input', (event) => {
+                const updatedAt = this.handleNoteInput(noteId, event.target.value);
+                const timeEl = container.querySelector('#note-editor-time');
+                if (timeEl && updatedAt) {
+                    timeEl.textContent = `Updated ${this.formatTime(updatedAt)}`;
+                }
+                const statusEl = container.querySelector('#note-editor-save-status');
+                if (statusEl) {
+                    statusEl.textContent = 'Saving...';
+                    clearTimeout(this._saveStatusTimer);
+                    this._saveStatusTimer = setTimeout(() => {
+                        statusEl.textContent = 'Saved';
+                        setTimeout(() => { statusEl.textContent = ''; }, 1500);
+                    }, 600);
+                }
+            });
+        }
     }
 
     renderEmptyState() {
@@ -1746,26 +1840,45 @@ class NotesPanel {
 
     renderNoteCard(note, index) {
         const quote = this.escapeHtml(this.getQuotePreview(note.quote));
-        const noteText = this.escapeHtml(note.note || '');
+        const notePreview = this.escapeHtml(note.note || '');
         const isActive = this.activeNoteId === note.id ? ' active' : '';
         const label = `Excerpt ${String(index + 1).padStart(2, '0')}`;
         const updated = this.formatTime(note.updatedAt || note.createdAt);
+        const hasNote = note.note && note.note.trim().length > 0;
 
         return `
-            <article class="page-note-card${isActive}" data-note-id="${this.escapeHtml(note.id)}">
+            <article class="page-note-card${isActive}" data-note-id="${this.escapeHtml(note.id)}" role="button" tabindex="0" title="Click to edit note">
                 <div class="page-note-card-head">
                     <span class="page-note-chip">${label}</span>
                     <div class="page-note-card-actions">
-                        <button class="page-note-ai-btn" data-note-id="${this.escapeHtml(note.id)}" title="AI Assist" aria-label="AI Assist">✨</button>
                         <button class="page-note-delete" data-note-id="${this.escapeHtml(note.id)}" title="Delete note" aria-label="Delete note">×</button>
                     </div>
                 </div>
                 <blockquote class="page-note-quote">${quote}</blockquote>
-                <label class="page-note-label" for="note-input-${this.escapeHtml(note.id)}">Your note</label>
-                <textarea id="note-input-${this.escapeHtml(note.id)}" class="page-note-input" data-note-id="${this.escapeHtml(note.id)}" placeholder="Write your observation for this excerpt...">${noteText}</textarea>
+                ${hasNote
+                    ? `<p class="page-note-preview">${notePreview}</p>`
+                    : `<p class="page-note-preview page-note-preview--empty">Click to add your note...</p>`
+                }
                 <div class="page-note-time">Updated ${updated}</div>
             </article>
         `;
+    }
+
+    enterEditMode(noteId) {
+        const note = this.findActivePageNote(noteId);
+        if (!note) return;
+        this.editingNoteId = noteId;
+        this.activeNoteId = noteId;
+        if (window.app?.currentPanel === 'notes') {
+            this.render(document.getElementById('panel-content'));
+        }
+    }
+
+    exitEditMode() {
+        this.editingNoteId = null;
+        if (window.app?.currentPanel === 'notes') {
+            this.render(document.getElementById('panel-content'));
+        }
     }
 
     setActivePage(page, options = {}) {
@@ -1774,6 +1887,7 @@ class NotesPanel {
         if (!Number.isFinite(nextPage) || nextPage < 1) return;
 
         this.activePage = nextPage;
+        this.editingNoteId = null;
         const notes = this.getActivePageNotes();
         if (!preserveActive || !notes.some(note => note.id === this.activeNoteId)) {
             this.activeNoteId = notes[0]?.id || '';
@@ -1845,6 +1959,10 @@ class NotesPanel {
             this.activeNoteId = nextNotes[0]?.id || '';
         }
 
+        if (this.editingNoteId === noteId) {
+            this.editingNoteId = null;
+        }
+
         app.persistNoteDeletion(noteId);
         app.schedulePersistPageNotes();
         app.pdfViewer?.clearNoteFocus();
@@ -1903,7 +2021,9 @@ class NotesPanel {
         const note = this.findActivePageNote(noteId);
         if (!note) return;
 
-        const textarea = document.getElementById(`note-input-${noteId}`);
+        // Support both the old card textarea and the new full-panel editor textarea
+        const textarea = document.querySelector(`.note-editor-textarea[data-note-id="${noteId}"]`)
+            || document.getElementById(`note-input-${noteId}`);
         if (textarea) {
             textarea.disabled = true;
             textarea.style.opacity = '0.6';
@@ -1922,8 +2042,8 @@ class NotesPanel {
 
             if (textarea) {
                 textarea.value = result.response;
-                const card = textarea.closest('.page-note-card');
-                const timeEl = card?.querySelector('.page-note-time');
+                const timeEl = document.getElementById('note-editor-time')
+                    || textarea.closest('.page-note-card')?.querySelector('.page-note-time');
                 if (timeEl) {
                     timeEl.textContent = `Updated ${this.formatTime(updatedAt)}`;
                 }

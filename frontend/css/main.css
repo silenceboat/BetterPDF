@@ -1908,6 +1908,8 @@ body.is-resizing-panels .panel-splitter {
     flex-direction: column;
     gap: var(--space-sm);
     transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+    cursor: pointer;
+    user-select: none;
 }
 
 .page-note-card:hover {
@@ -1965,19 +1967,162 @@ body.is-resizing-panels .panel-splitter {
     border-left: 3px solid var(--accent-primary);
     padding: 6px 0 6px 12px;
     color: var(--ink-secondary);
-    font-size: 14px;
-    line-height: 1.65;
+    font-size: 13px;
+    line-height: 1.55;
+    font-style: italic;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+.page-note-preview {
+    margin: 0;
+    font-size: 13px;
+    color: var(--ink-secondary);
+    line-height: 1.5;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+.page-note-preview--empty {
+    color: var(--ink-muted);
     font-style: italic;
 }
 
-.page-note-label {
-    font-size: 11px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--ink-muted);
-    font-family: var(--font-mono);
+/* ==================== Note Full-Panel Editor ==================== */
+.note-editor-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    height: 100%;
+    background:
+        radial-gradient(120% 90% at 100% 0%, rgba(212, 160, 60, 0.06) 0%, rgba(212, 160, 60, 0) 55%),
+        linear-gradient(180deg, var(--bg-paper) 0%, var(--bg-secondary) 100%);
 }
 
+.note-editor-header {
+    display: flex;
+    align-items: center;
+    padding: var(--space-sm) var(--space-md);
+    border-bottom: 1px solid var(--border-color);
+    gap: var(--space-sm);
+    flex-shrink: 0;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0.2) 100%);
+    min-height: 48px;
+}
+
+.note-editor-back {
+    flex-shrink: 0;
+    padding: 5px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    color: var(--ink-secondary);
+    font-family: var(--font-body);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+}
+
+.note-editor-back:hover {
+    background: var(--bg-tertiary);
+    color: var(--ink-primary);
+    border-color: var(--border-hover);
+}
+
+.note-editor-meta {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    min-width: 0;
+    overflow: hidden;
+}
+
+.note-editor-page-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-muted);
+    white-space: nowrap;
+}
+
+.note-editor-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.note-editor-quote {
+    margin: var(--space-md) var(--space-lg) 0;
+    border-left: 3px solid var(--accent-primary);
+    padding: 8px 0 8px 14px;
+    color: var(--ink-secondary);
+    font-size: 13px;
+    line-height: 1.6;
+    font-style: italic;
+    flex-shrink: 0;
+    max-height: 96px;
+    overflow-y: auto;
+}
+
+.note-editor-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-md) var(--space-lg) 0;
+    min-height: 0;
+}
+
+.note-editor-textarea {
+    flex: 1;
+    width: 100%;
+    resize: none;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    color: var(--ink-primary);
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.75;
+    padding: var(--space-md);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    min-height: 0;
+}
+
+.note-editor-textarea:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.note-editor-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-sm) var(--space-lg);
+    flex-shrink: 0;
+}
+
+.note-editor-time {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-muted);
+}
+
+.note-editor-save-status {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent-primary);
+    opacity: 0.8;
+}
+
+/* Legacy: keep .page-note-input for any remaining usage */
 .page-note-input {
     width: 100%;
     min-height: 96px;
