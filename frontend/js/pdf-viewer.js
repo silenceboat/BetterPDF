@@ -118,6 +118,7 @@ class PDFViewer {
                 ? Math.max(this.minZoom, Math.min(this.maxZoom, savedZoom))
                 : 1.0;
             this.ocrResults = {};
+            this.ocrCachedPages = new Set(result.ocr_cached_pages || []);
             this.ocrEnabled = false;
             this.searchHighlights = {};
             this.searchCurrentPage = 0;
@@ -769,7 +770,7 @@ class PDFViewer {
         if (!statusEl) return;
 
         const isProcessing = this.ocrPageLoadingPage === this.currentPage;
-        const isProcessed = this.ocrDocumentFullyProcessed || !!this.ocrResults[this.currentPage];
+        const isProcessed = this.ocrDocumentFullyProcessed || !!this.ocrResults[this.currentPage] || this.ocrCachedPages?.has(this.currentPage);
 
         statusEl.classList.remove('idle', 'processing', 'processed');
         if (isProcessing) {

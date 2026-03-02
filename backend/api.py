@@ -141,6 +141,7 @@ class DeepReadAPI:
                 "session_state": session_state,
                 "page_notes": page_notes,
                 "supports_ocr": isinstance(self.pdf_engine, PDFEngine),
+                "ocr_cached_pages": sorted(self._ocr_cache.keys()),
             }
         except Exception as e:
             return {
