@@ -67,6 +67,10 @@ class DeepReadApp {
         this.loadAppInfo();
         this.refreshRecentFiles();
 
+        // PyWebView backend may not be ready at DOMContentLoaded time.
+        // Re-fetch recent files once the Python API is available.
+        window.addEventListener('pywebviewready', () => this.refreshRecentFiles());
+
         console.log('DeepRead AI initialized');
     }
 
@@ -503,6 +507,9 @@ class DeepReadApp {
         setTimeout(() => {
             document.addEventListener('click', this.recentMenuHideHandler);
         }, 0);
+        // Always fetch fresh data when the menu opens so the list is up-to-date
+        // even if the initial load happened before PyWebView was ready.
+        this.refreshRecentFiles();
     }
 
     hideRecentFilesMenu() {
