@@ -2476,6 +2476,60 @@ body.pdf-focus-mode .toast-container-top {
     color: var(--accent-primary);
 }
 
+.ai-assist-menu-sep {
+    height: 1px;
+    background: var(--border-color);
+    margin: 4px 0;
+}
+
+/* AI custom instruction popup */
+.ai-custom-input {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: var(--shadow-lg);
+    padding: 8px;
+    width: 240px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    animation: fadeInDown 0.12s ease;
+}
+
+.ai-custom-input-field {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    padding: 6px 8px;
+    font-size: 13px;
+    font-family: inherit;
+    color: var(--ink-primary);
+    background: var(--bg-primary);
+    resize: none;
+    outline: none;
+}
+
+.ai-custom-input-field:focus {
+    border-color: var(--accent-primary);
+}
+
+.ai-custom-input-send {
+    align-self: flex-end;
+    padding: 4px 14px;
+    border-radius: 5px;
+    border: none;
+    background: var(--accent-primary);
+    color: #fff;
+    font-size: 12px;
+    cursor: pointer;
+    transition: opacity var(--transition-fast);
+}
+
+.ai-custom-input-send:hover {
+    opacity: 0.85;
+}
+
 /* ==================== Icon Font ==================== */
 /* Using inline SVG for icons instead of emoji */
 .icon-search::before {

@@ -758,20 +758,21 @@ class DeepReadAPI:
                 "error": str(e),
             }
 
-    def ai_note_assist(self, action: str, note_content: str = "", quote: str = "") -> dict:
+    def ai_note_assist(self, action: str, note_content: str = "", quote: str = "", instruction: str = "") -> dict:
         """
         Apply an AI action to a page note.
 
         Args:
-            action: Action type (improve, expand, translate, summarize)
+            action: Action type (improve, expand, translate, summarize, custom)
             note_content: Current note text
             quote: The quoted excerpt the note is attached to
+            instruction: Custom instruction when action='custom'
 
         Returns:
             Dict with success status and AI-improved note text
         """
         try:
-            response = self.ai_service.note_assist(note_content, quote, action)
+            response = self.ai_service.note_assist(note_content, quote, action, instruction)
             return {"success": True, "response": response}
         except Exception as e:
             return {"success": False, "error": str(e)}

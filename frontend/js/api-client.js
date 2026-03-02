@@ -335,8 +335,8 @@ const API = {
      * @param {string} quote - Quoted excerpt the note is attached to
      * @returns {Promise<{success: boolean, response?: string}>}
      */
-    async aiNoteAssist(action, noteContent, quote = '') {
-        return this.call('ai_note_assist', action, noteContent, quote);
+    async aiNoteAssist(action, noteContent, quote = '', instruction = '') {
+        return this.call('ai_note_assist', action, noteContent, quote, instruction);
     },
 
     // ==================== Note Operations ====================

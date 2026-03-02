@@ -144,8 +144,15 @@ class AIService:
             prompt += f"\n\nDocument context:\n{document_context}"
         return self.chat(prompt)
 
-    def note_assist(self, note_content: str, quote: str, action: str) -> str:
+    def note_assist(self, note_content: str, quote: str, action: str, instruction: str = "") -> str:
         """Apply an AI action to a note, returning the improved text."""
+        if action == "custom":
+            parts = [instruction.strip() or "Improve this note."]
+            if note_content:
+                parts.append(f"\nNote:\n{note_content}")
+            if quote:
+                parts.append(f"\nContext (quoted from document):\n{quote}")
+            return self.chat("\n".join(parts))
         template = NOTE_ASSIST_ACTIONS.get(action)
         if template is None:
             raise ValueError(f"Unknown note assist action: {action!r}")

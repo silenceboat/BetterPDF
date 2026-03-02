@@ -1999,6 +1999,22 @@ class NotesPanel {
             menu.appendChild(item);
         });
 
+        const sep = document.createElement('div');
+        sep.className = 'ai-assist-menu-sep';
+        menu.appendChild(sep);
+
+        const customItem = document.createElement('button');
+        customItem.className = 'ai-assist-menu-item';
+        customItem.textContent = 'Custom...';
+        customItem.setAttribute('role', 'menuitem');
+        customItem.addEventListener('click', (e) => {
+            e.stopPropagation();
+            menu.remove();
+            document.removeEventListener('click', closeOnOutside, true);
+            this.showAiCustomInput(noteId, anchor);
+        });
+        menu.appendChild(customItem);
+
         const rect = anchor.getBoundingClientRect();
         menu.style.position = 'fixed';
         menu.style.top = `${rect.bottom + 4}px`;
@@ -2017,7 +2033,66 @@ class NotesPanel {
         }, 0);
     }
 
-    async applyAiAssist(noteId, action) {
+    showAiCustomInput(noteId, anchor) {
+        document.querySelectorAll('.ai-custom-input').forEach(el => el.remove());
+
+        const rect = anchor.getBoundingClientRect();
+        const popup = document.createElement('div');
+        popup.className = 'ai-custom-input';
+        popup.style.position = 'fixed';
+        popup.style.top = `${rect.bottom + 4}px`;
+        popup.style.left = `${rect.left}px`;
+        popup.style.zIndex = '9999';
+
+        const textarea = document.createElement('textarea');
+        textarea.className = 'ai-custom-input-field';
+        textarea.rows = 3;
+        textarea.placeholder = 'Describe what you want AI to do...';
+
+        const sendBtn = document.createElement('button');
+        sendBtn.className = 'ai-custom-input-send';
+        sendBtn.textContent = 'Send';
+
+        const submit = () => {
+            const instruction = textarea.value.trim();
+            if (!instruction) return;
+            popup.remove();
+            document.removeEventListener('click', closeOnOutside, true);
+            this.applyAiAssist(noteId, 'custom', instruction);
+        };
+
+        textarea.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+            }
+            if (e.key === 'Escape') {
+                popup.remove();
+                document.removeEventListener('click', closeOnOutside, true);
+            }
+        });
+        sendBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            submit();
+        });
+
+        popup.appendChild(textarea);
+        popup.appendChild(sendBtn);
+        document.body.appendChild(popup);
+        textarea.focus();
+
+        const closeOnOutside = (e) => {
+            if (!popup.contains(e.target)) {
+                popup.remove();
+                document.removeEventListener('click', closeOnOutside, true);
+            }
+        };
+        setTimeout(() => {
+            document.addEventListener('click', closeOnOutside, true);
+        }, 0);
+    }
+
+    async applyAiAssist(noteId, action, instruction = '') {
         const note = this.findActivePageNote(noteId);
         if (!note) return;
 
@@ -2030,7 +2105,7 @@ class NotesPanel {
         }
 
         try {
-            const result = await API.aiNoteAssist(action, note.note || '', note.quote || '');
+            const result = await API.aiNoteAssist(action, note.note || '', note.quote || '', instruction);
             if (!result.success) {
                 window.app?.showToast(result.error || 'AI assist failed', 'error');
                 return;
