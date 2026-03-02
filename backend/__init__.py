@@ -9,6 +9,6 @@ Contains the Python backend logic for the web-based UI:
 
 from .api import DeepReadAPI
 from .pdf_engine import PDFEngine
-from .ai_service import AIService
+from .ai import AIService
 
 __all__ = ["DeepReadAPI", "PDFEngine", "AIService"]
