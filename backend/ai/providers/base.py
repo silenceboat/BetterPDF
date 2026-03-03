@@ -22,6 +22,19 @@ class BaseProvider(ABC):
     @abstractmethod
     def env_key() -> str: ...
 
+    def supports_tools(self) -> bool:
+        return False
+
+    def chat_with_tools(
+        self,
+        messages: list[dict],
+        model: str,
+        tools: list,
+        max_iterations: int = 5,
+    ) -> str:
+        """Default: ignore tools and fall back to plain chat."""
+        return self.chat(messages, model)
+
     def validate(self) -> tuple[bool, str]:
         resolved = self.resolve_api_key()
         if not resolved:

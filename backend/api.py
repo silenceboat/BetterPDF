@@ -14,6 +14,7 @@ import time
 from .pdf_engine import PDFEngine
 from .engine_factory import create_engine
 from .ai import AIService
+from .ai.tools import NoteReadTool, NoteDeleteTool, DocumentSearchTool
 from .persistence import PersistenceStore
 
 
@@ -64,6 +65,35 @@ class DeepReadAPI:
             )
         except Exception as e:
             self._persistence_error = str(e)
+
+        self.ai_service.configure_agents(
+            chat_tools=[
+                NoteReadTool(lambda page=None: (
+                    self._persistence.list_page_notes(self.current_pdf_path)
+                    if self._persistence and self.current_pdf_path else []
+                )),
+                DocumentSearchTool(lambda q, page=None: (
+                    self.pdf_engine.search_text(q, page)
+                    if self.pdf_engine else []
+                )),
+            ],
+            note_assist_tools=[
+                NoteReadTool(lambda page=None: (
+                    self._persistence.list_page_notes(self.current_pdf_path)
+                    if self._persistence and self.current_pdf_path else []
+                )),
+                NoteDeleteTool(lambda note_id: (
+                    self._persistence.delete_page_note(self.current_pdf_path, note_id)
+                    if self._persistence and self.current_pdf_path else None
+                )),
+            ],
+            document_tools=[
+                DocumentSearchTool(lambda q, page=None: (
+                    self.pdf_engine.search_text(q, page)
+                    if self.pdf_engine else []
+                )),
+            ],
+        )
 
     @staticmethod
     def _normalize_file_path(file_path: str) -> str:
