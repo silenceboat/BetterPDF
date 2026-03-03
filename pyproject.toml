@@ -1,6 +1,6 @@
 [project]
 name = "deepread-ai"
-version = "0.1.18"
+version = "0.1.19"
 description = "Desktop PDF reader with OCR and AI integration"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -11,6 +11,7 @@ dependencies = [
     "pillow>=10.0",
     "pymupdf>=1.23",
     "python-docx>=1.1.0",
+    "python-pptx>=0.6.23",
     "pywebview>=4.4",
     "requests>=2.28",
 ]

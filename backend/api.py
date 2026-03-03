@@ -908,7 +908,7 @@ class DeepReadAPI:
         script = r"""
 Add-Type -AssemblyName System.Windows.Forms
 $dialog = New-Object System.Windows.Forms.OpenFileDialog
-$dialog.Filter = "Supported Files (*.pdf;*.docx;*.txt)|*.pdf;*.docx;*.txt|PDF (*.pdf)|*.pdf|Word (*.docx)|*.docx|Text (*.txt)|*.txt|All (*.*)|*.*"
+$dialog.Filter = "Supported Files (*.pdf;*.docx;*.pptx;*.txt)|*.pdf;*.docx;*.pptx;*.txt|PDF (*.pdf)|*.pdf|Word (*.docx)|*.docx|PowerPoint (*.pptx)|*.pptx|Text (*.txt)|*.txt|All (*.*)|*.*"
 $dialog.Multiselect = $false
 $dialog.RestoreDirectory = $true
 if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
@@ -980,7 +980,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
             import webview
             result = self._window.create_file_dialog(
                 webview.OPEN_DIALOG,
-                file_types=('Supported Files (*.pdf;*.docx;*.txt)', 'PDF Files (*.pdf)', 'Word Files (*.docx)', 'Text Files (*.txt)', 'All Files (*.*)'),
+                file_types=('Supported Files (*.pdf;*.docx;*.pptx;*.txt)', 'PDF Files (*.pdf)', 'Word Files (*.docx)', 'PowerPoint Files (*.pptx)', 'Text Files (*.txt)', 'All Files (*.*)'),
             )
 
             if result and len(result) > 0:
