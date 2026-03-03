@@ -9,14 +9,22 @@ from .base import BaseProvider
 
 
 class AnthropicProvider(BaseProvider):
-    def __init__(self, api_key: str, base_url: str = "") -> None:
-        self.api_key = api_key
-        self.base_url = base_url
+    def __init__(self, api_key: str = "", base_url: str = "") -> None:
+        super().__init__(api_key, base_url)
+
+    @staticmethod
+    def default_model() -> str:
+        return "claude-3-5-haiku-latest"
+
+    @staticmethod
+    def env_key() -> str:
+        return "ANTHROPIC_API_KEY"
 
     def chat(self, messages: list[dict], model: str) -> str:
         import requests
 
-        if not self.api_key:
+        resolved_key = self.resolve_api_key()
+        if not resolved_key:
             raise ValueError("Anthropic API key is missing. Set it in Settings or ANTHROPIC_API_KEY.")
 
         base = self.base_url or os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
@@ -45,7 +53,7 @@ class AnthropicProvider(BaseProvider):
             endpoint,
             json=payload,
             headers={
-                "x-api-key": self.api_key,
+                "x-api-key": resolved_key,
                 "anthropic-version": "2023-06-01",
                 "content-type": "application/json",
             },

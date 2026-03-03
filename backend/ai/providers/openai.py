@@ -2,27 +2,35 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from .base import BaseProvider
 
 
 class OpenAIProvider(BaseProvider):
-    def __init__(self, api_key: str, base_url: str = "") -> None:
-        self.api_key = api_key
-        self.base_url = base_url
+    def __init__(self, api_key: str = "", base_url: str = "") -> None:
+        super().__init__(api_key, base_url)
         self._client = None
         self._initialized = False
+
+    @staticmethod
+    def default_model() -> str:
+        return "gpt-4o-mini"
+
+    @staticmethod
+    def env_key() -> str:
+        return "OPENAI_API_KEY"
 
     def _ensure_client(self) -> None:
         if self._initialized:
             return
         self._initialized = True
-        if not self.api_key:
+        resolved_key = self.resolve_api_key()
+        if not resolved_key:
             return
         try:
             import openai
-            kwargs: dict[str, Any] = {"api_key": self.api_key}
+            kwargs: dict[str, Any] = {"api_key": resolved_key}
             if self.base_url:
                 kwargs["base_url"] = self.base_url
             self._client = openai.OpenAI(**kwargs)

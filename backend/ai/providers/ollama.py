@@ -8,9 +8,20 @@ from .base import BaseProvider
 
 
 class OllamaProvider(BaseProvider):
-    def __init__(self, base_url: str = "", api_key: str = "") -> None:
-        self.base_url = base_url
-        self.api_key = api_key
+    def __init__(self, api_key: str = "", base_url: str = "") -> None:
+        super().__init__(api_key, base_url)
+
+    @staticmethod
+    def default_model() -> str:
+        return "llama3.2"
+
+    @staticmethod
+    def env_key() -> str:
+        return "OLLAMA_API_KEY"
+
+    def validate(self) -> tuple[bool, str]:
+        """Ollama does not require an API key."""
+        return True, ""
 
     def chat(self, messages: list[dict], model: str) -> str:
         import requests
